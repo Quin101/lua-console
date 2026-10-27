@@ -75,7 +75,9 @@ recipient you type — an ordinary mail-client send.
    **app password**, not your normal one.
 2. `email test` — sends a test message to yourself.
 3. `email send <address>` — type a subject, then the message (end with a single
-   `.` on its own line), confirm, and it goes.
+   `.` on its own line), confirm, and it goes. To reach several people, separate
+   the addresses with commas (`email send a@x.com, b@y.com`); it asks whether to
+   show everyone (To) or hide them from each other (Bcc), up to 100 per message.
 4. `email config` — shows your settings with the password hidden.
 
 Your settings are saved in `email.cfg` in the save folder; keep an app password

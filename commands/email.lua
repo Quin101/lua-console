@@ -49,8 +49,20 @@ local function compose_and_send(t, to)
         t.print("{warn}▲ not set up yet.{} run {accent}email setup{} first")
         return
     end
-    if not to or to == "" then to = t.ask("to: ") end
-    if to == "" or not to:find("@") then return t.print("{err}✗{} need a valid recipient address") end
+    if not to or to == "" then to = t.ask("to (comma-separate several): ") end
+    local rcpts = email.parse_recipients(to)
+    if #rcpts == 0 then return t.print("{err}✗{} need at least one valid recipient address") end
+    if #rcpts > email.MAX_RECIPIENTS then
+        return t.print("{err}✗{} that's " .. #rcpts .. " recipients — keep it to " .. email.MAX_RECIPIENTS .. " or fewer per message")
+    end
+
+    local visible = false
+    if #rcpts > 1 then
+        t.print("{dim}" .. #rcpts .. " recipients. show everyone's address to each other (To), or hide them (Bcc)?")
+        local mode = t.ask("{dim}visibility [{}hidden{dim}/{}visible{dim}]: "):lower()
+        visible = mode:sub(1, 1) == "v"
+    end
+
     local subject = t.ask("subject: ")
     t.print("{dim}message — type your lines, then a single {white}.{dim} on its own line to finish:")
     local lines = {}
@@ -62,8 +74,12 @@ local function compose_and_send(t, to)
     end
     local body = table.concat(lines, "\n")
     t.print("")
-    t.print("{dim}from {}" .. esc(c.from) .. "{dim}  to {}" .. esc(to) .. "{dim}  subj {}" .. esc(subject))
-    local yes = t.ask("send this? [y/N] "):lower()
+    local to_show = #rcpts <= 4 and table.concat(rcpts, ", ")
+        or (table.concat({ rcpts[1], rcpts[2], rcpts[3] }, ", ") .. " +" .. (#rcpts - 3) .. " more")
+    t.print("{dim}from {}" .. esc(c.from))
+    t.print("{dim}to   {}" .. esc(to_show) .. "  {dim}(" .. #rcpts .. ", " .. (visible and "visible" or "hidden/bcc") .. ")")
+    t.print("{dim}subj {}" .. esc(subject))
+    local yes = t.ask("send to " .. #rcpts .. " recipient" .. (#rcpts == 1 and "" or "s") .. "? [y/N] "):lower()
     if yes ~= "y" and yes ~= "yes" then
         t.print("{dim}cancelled")
         t.sound("back")
@@ -72,7 +88,7 @@ local function compose_and_send(t, to)
 
     t.spin("connecting to " .. esc(c.host), 0.6)
     t.print("{dim}handing off to " .. esc(c.host) .. "…")
-    local ok, detail, hint = email.send(c, to, subject, body)
+    local ok, detail, hint = email.send(c, rcpts, subject, body, { visible = visible })
     if ok then
         t.flash("accent", 0.15)
         t.print("{accent}✓ sent{}  {dim}" .. esc(detail))
@@ -91,7 +107,7 @@ return {
         name = "email",
         aliases = { "mail", "sendmail" },
         help = "send real email via your own SMTP account",
-        usage = "email <setup|send|test|config> [address]",
+        usage = "email <setup|send|test|config> [address,address,…]",
         category = "tools",
         run = function(t, args, rest)
             local sub = (args[1] or ""):lower()
@@ -124,7 +140,7 @@ return {
                 t.print("{dim}real email sender — send through your own SMTP account")
                 t.print("")
                 t.print("  {accent}email setup{}           {dim}configure your server + login (once)")
-                t.print("  {accent}email send <address>{}  {dim}compose and send a message")
+                t.print("  {accent}email send <a@x,b@y>{}   {dim}compose & send (comma-separate recipients)")
                 t.print("  {accent}email test{}            {dim}send yourself a test")
                 t.print("  {accent}email config{}          {dim}show settings (password hidden)")
                 t.print("")

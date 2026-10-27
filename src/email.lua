@@ -78,12 +78,38 @@ local function rfc822(c, to, subject, body)
     return table.concat(headers, "\r\n") .. "\r\n\r\n" .. body .. "\r\n"
 end
 
--- sends one message. returns ok(boolean), detail(string)
-function email.send(c, to, subject, body)
+-- splits "a@x.com, b@y.com; c@z.com" into a clean, de-duplicated list of addresses
+email.MAX_RECIPIENTS = 100
+function email.parse_recipients(s)
+    local list, seen = {}, {}
+    for part in tostring(s or ""):gmatch("[^,;%s]+") do
+        local addr = part:gsub("^<", ""):gsub(">$", "")
+        if addr:find("@") and not seen[addr:lower()] then
+            seen[addr:lower()] = true
+            list[#list + 1] = addr
+        end
+    end
+    return list
+end
+
+-- sends one message to one or more recipients.
+--   to       a comma/space separated string, or a list of addresses
+--   opts.visible   true = everyone in the To header; false/nil = Bcc (hidden)
+-- returns ok(boolean), detail(string), hint(string|nil), count(number)
+function email.send(c, to, subject, body, opts)
     c = c or email.load()
+    opts = opts or {}
     if not email.configured(c) then return false, "not configured — run `email setup` first" end
-    if not to or to == "" or not to:find("@") then return false, "invalid recipient address" end
     if not email.curl_ok() then return false, "curl was not found on this system (needed to send mail)" end
+
+    local rcpts = type(to) == "table" and to or email.parse_recipients(to)
+    if #rcpts == 0 then return false, "no valid recipient address" end
+    if #rcpts > email.MAX_RECIPIENTS then
+        return false, ("too many recipients (%d) — keep it to %d or fewer per message"):format(#rcpts, email.MAX_RECIPIENTS)
+    end
+
+    -- the visible To: header (everyone when visible, otherwise hide the list)
+    local to_header = (opts.visible or #rcpts == 1) and table.concat(rcpts, ", ") or "undisclosed-recipients:;"
 
     local port = c.port or "465"
     local secure = c.secure or (port == "587" and "starttls" or "ssl")
@@ -92,7 +118,7 @@ function email.send(c, to, subject, body)
 
     local msg_name = "email_msg.txt"
     local cfg_name = "email_curl.cfg"
-    love.filesystem.write(msg_name, rfc822(c, to, subject, body))
+    love.filesystem.write(msg_name, rfc822(c, to_header, subject, body))
 
     -- put the url, credentials and options in a curl config file so the
     -- password never appears in the process list / command line
@@ -102,12 +128,12 @@ function email.send(c, to, subject, body)
         "url = " .. esc(url),
         "user = " .. esc(c.user .. ":" .. c.pass),
         "mail-from = " .. esc(c.from),
-        "mail-rcpt = " .. esc(to),
-        "upload-file = " .. esc(real(msg_name)),
-        "ssl-reqd",
-        "silent",
-        "show-error",
     }
+    for _, r in ipairs(rcpts) do cfg[#cfg + 1] = "mail-rcpt = " .. esc(r) end
+    for _, line in ipairs({
+        "upload-file = " .. esc(real(msg_name)),
+        "ssl-reqd", "silent", "show-error",
+    }) do cfg[#cfg + 1] = line end
     love.filesystem.write(cfg_name, table.concat(cfg, "\n") .. "\n")
 
     -- `&& echo __QOK__` marks a zero exit code (works in sh and cmd.exe)
@@ -121,9 +147,12 @@ function email.send(c, to, subject, body)
 
     local ok = out:find("__QOK__", 1, true) ~= nil
     out = (out:gsub("__QOK__%s*$", "")):gsub("%s+$", "")
-    if ok then return true, "delivered to your SMTP server" end
+    if ok then
+        local n = #rcpts
+        return true, ("delivered to your SMTP server for %d recipient%s"):format(n, n == 1 and "" or "s"), nil, n
+    end
     if out == "" then out = "curl failed (no output) — check host, port and network" end
-    return false, out, email.hint(out)
+    return false, out, email.hint(out), #rcpts
 end
 
 -- turn a raw curl/SMTP error into a plain-English next step
