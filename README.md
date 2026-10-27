@@ -33,7 +33,8 @@ The hacking commands are fake theatre. Nothing touches your real network.
   edit text in place, preview images (list or grid view), rename, delete, and open the folder on disk.
 - **Terminal**: `help` lists everything. Map: `markers`, `locate <name>`, `dossier <name>`,
   `link <a> <b> [label]`, `board`. Files: `ls`, `cat`, `mkdir`, `write`, `files`.
-  Tools: `password`, `calc` (`=`) — a real calculator, e.g. `= (5+3)*2 / sqrt(2)`.
+  Tools: `password`, `calc` (`=`) — a real calculator, and `email` — a real
+  email sender (see below).
 - **Sound**: dark synthesized sounds (sub-bass hits, distortion, reverb) and a low ambient drone.
   Turn them off with `sound off`, or set `ambient = false` in `config.lua`.
 
@@ -62,6 +63,23 @@ macOS will block it because it isn't signed: go to **System Settings → Privacy
 | `esc` | cancel placement / close viewer or editor |
 | `F11` | fullscreen |
 | click a panel title | collapse it |
+
+## Sending real email
+
+`email` sends real mail through **your own** email account over SMTP (using the
+system `curl`). It sends one message at a time, from your address, to a
+recipient you type — an ordinary mail-client send.
+
+1. `email setup` — pick a provider (Gmail, Outlook, Yahoo, iCloud, or custom)
+   and enter your address and password. For Gmail/Yahoo/iCloud use an
+   **app password**, not your normal one.
+2. `email test` — sends a test message to yourself.
+3. `email send <address>` — type a subject, then the message (end with a single
+   `.` on its own line), confirm, and it goes.
+4. `email config` — shows your settings with the password hidden.
+
+Your settings are saved in `email.cfg` in the save folder; keep an app password
+there rather than your main password. `curl` ships with macOS and Windows 10+.
 
 ## Add your own stuff
 
