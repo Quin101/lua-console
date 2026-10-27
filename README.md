@@ -33,7 +33,7 @@ The hacking commands are fake theatre. Nothing touches your real network.
   edit text in place, preview images (list or grid view), rename, delete, and open the folder on disk.
 - **Terminal**: `help` lists everything. Map: `markers`, `locate <name>`, `dossier <name>`,
   `link <a> <b> [label]`, `board`. Files: `ls`, `cat`, `mkdir`, `write`, `files`.
-  Tools: `password`.
+  Tools: `password`, `calc` (`=`) — a real calculator, e.g. `= (5+3)*2 / sqrt(2)`.
 - **Sound**: dark synthesized sounds (sub-bass hits, distortion, reverb) and a low ambient drone.
   Turn them off with `sound off`, or set `ambient = false` in `config.lua`.
 
