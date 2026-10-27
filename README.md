@@ -22,9 +22,9 @@ The hacking commands are fake theatre. Nothing touches your real network.
   - **Tags** (suspect, witness, victim, person of interest, safehouse, sighting): colour-code markers.
   - **Links**: the ↔ LINK tool connects two markers with a labelled line; the editor lists them as chips.
   - **Evidence**: drag any non-image file onto a selected marker (or use + FILE) to attach a vault file.
-  - **Timeline** (⊙ TIME): a scrubber under the map; drag the playhead to reveal markers by date.
-- **Case board** (the BOARD tab): a corkboard of marker cards joined by red string. Drag cards to
-  arrange them, drag the background to pan, wheel to zoom, and LINK to connect cards.
+- **Case board** (the BOARD tab): a standalone corkboard, separate from the map. Press **+ CARD**
+  to pin a note (title + text), colour it, drop a photo on it, and **↔ LINK** cards with red string.
+  Drag cards to arrange, drag the background to pan, wheel to zoom. Saved to its own file.
 - **Password forge** (the KEYS tab): generate strong passwords (length, character sets, avoid
   look-alikes), copy them, and rate the strength of any password you type — entropy, character
   mix and estimated crack time, all computed locally.
@@ -32,7 +32,7 @@ The hacking commands are fake theatre. Nothing touches your real network.
   Make folders and text documents, import images and any other files by dragging them onto the window,
   edit text in place, preview images (list or grid view), rename, delete, and open the folder on disk.
 - **Terminal**: `help` lists everything. Map: `markers`, `locate <name>`, `dossier <name>`,
-  `link <a> <b> [label]`, `board`, `timeline`. Files: `ls`, `cat`, `mkdir`, `write`, `files`.
+  `link <a> <b> [label]`, `board`. Files: `ls`, `cat`, `mkdir`, `write`, `files`.
   Tools: `password`.
 - **Sound**: dark synthesized sounds (sub-bass hits, distortion, reverb) and a low ambient drone.
   Turn them off with `sound off`, or set `ambient = false` in `config.lua`.
@@ -130,7 +130,8 @@ src/fx.lua          glow, ripples, sparks, glitch, matrix rain
 src/sound.lua       sounds generated in code (no audio files)
 src/intro.lua       the start-up animation
 src/world.lua       land data -> map dots and globe points
-src/markers.lua     marker storage + photos (shared by the map and commands)
+src/markers.lua     map marker storage (markers, links, evidence, tags, photos)
+src/board.lua       case board storage (its own cards + links, separate from the map)
 src/vault.lua       the file vault (folders, documents, imported files)
 src/images.lua      image loading/caching + full-screen viewer helpers
 assets/worldmask.lua  0.5° land mask (from global-land-mask, MIT; NOAA GLOBE data, public domain)

@@ -180,8 +180,6 @@ function W.load(w, ui)
     w.tool = nil
     w.link_mode = false
     w.link_from = nil
-    w.timeline = false
-    w.playhead = 1
     w.filter = "all"
     w.search = ""
     w.list_scroll = 0
@@ -378,28 +376,18 @@ local function draw_map(w, ui, r)
         love.graphics.line(p[1], r.y, p[1], r.y + r.h)
     end
 
-    -- timeline: fade markers dated after the playhead
-    local ph_date = w.timeline and w.playhead_date or nil
-    local function tl_fade(m)
-        if not ph_date then return 1 end
-        local d = markers.event_date(m)
-        if not d then return 0.9 end
-        return d <= ph_date + 1e-6 and 1 or 0.12
-    end
-
     for _, m in ipairs(markers.list) do
         local p = pos[m.id]
         if p[1] > r.x - 30 and p[1] < r.x + r.w + 30 and p[2] > r.y - 30 and p[2] < r.y + r.h + 30 then
             local hov = hovered == m
             local s = ui.ease("mk_s_" .. m.id, hov and 8.5 or 6, 16)
             local selected = markers.selected == m.id
-            local fade = tl_fade(m)
             local col = marker_color(m)
             if w.link_from == m.id then col = util.palette.white end
             if m.kind == "victim" then
-                draw_victim(p[1], p[2], s, fade, time, m.id, selected and fade > 0.5, col)
+                draw_victim(p[1], p[2], s, 1, time, m.id, selected, col)
             else
-                draw_place(p[1], p[2], s - 1, fade, selected and fade > 0.5, col)
+                draw_place(p[1], p[2], s - 1, 1, selected, col)
             end
             if p[3] < 1 then
                 ui.set_color("white", 1 - p[3])
@@ -917,112 +905,6 @@ draw_evidence_picker = function(w, ui, x, y, width, height)
     if ui.press and not ui.press.used and not ui.hover(px, py, pw, phh) then w.evidence_pick = nil end
 end
 
--- horizontal timeline: ticks per marker, a draggable playhead, year labels
-local function year_label(v)
-    return tostring(math.floor(v))
-end
-
-local function draw_timeline(w, ui, x, y, tw, th)
-    local lo, hi = markers.timeline_range()
-    ui.set_color("bg", 0.6)
-    love.graphics.rectangle("fill", x, y, tw, th, 3, 3)
-    ui.set_color("faint", 1); love.graphics.setLineWidth(1)
-    love.graphics.rectangle("line", x + 0.5, y + 0.5, tw - 1, th - 1, 3, 3)
-    ui.text("TIMELINE", x + 8, y + 4, "dim", ui.font)
-    if not lo then
-        ui.text("no dated markers — add dates to victims to see them here", x + 80, y + 4, "faint")
-        return
-    end
-    if hi - lo < 0.01 then hi = lo + 1 end
-    local pad = 14
-    local ax, aw = x + pad, tw - pad * 2
-    local ay = y + th - 18
-    w.playhead = w.playhead or 1
-    w.playhead_date = lo + (hi - lo) * w.playhead
-
-    -- axis
-    ui.set_color("dim", 1)
-    love.graphics.setLineWidth(1)
-    love.graphics.line(ax, ay, ax + aw, ay)
-    -- year gridlines
-    local span = hi - lo
-    local step = span > 60 and 20 or (span > 20 and 10 or (span > 8 and 5 or 1))
-    for yr = math.ceil(lo / step) * step, hi, step do
-        local px = ax + (yr - lo) / span * aw
-        ui.set_color("faint", 1)
-        love.graphics.line(px, y + 18, px, ay)
-        ui.text(year_label(yr), px - ui.font:getWidth(year_label(yr)) / 2, ay + 2, "dim")
-    end
-
-    -- shade the "future" (right of the playhead)
-    local hx = ax + w.playhead * aw
-    ui.set_color("bg", 0.5)
-    love.graphics.rectangle("fill", hx, y + 17, ax + aw - hx, ay - y - 17)
-
-    -- ticks
-    local hovered_tick
-    for _, m in ipairs(markers.list) do
-        local d = markers.event_date(m)
-        if d then
-            local px = ax + (d - lo) / span * aw
-            local future = d > w.playhead_date + 1e-6
-            local c = marker_color(m)
-            local sel = markers.selected == m.id
-            local tickh = sel and 12 or 8
-            love.graphics.setColor(c[1], c[2], c[3], future and 0.3 or 1)
-            love.graphics.setLineWidth(sel and 2 or 1)
-            love.graphics.line(px, ay - tickh, px, ay)
-            if m.kind == "victim" then
-                love.graphics.polygon("fill", px, ay - tickh - 5, px + 3, ay - tickh, px - 3, ay - tickh)
-            else
-                love.graphics.circle(future and "line" or "fill", px, ay - tickh - 3, 2.5)
-            end
-            if ui.hover(px - 5, y + 16, 10, th - 20) then hovered_tick = { m = m, px = px } end
-        end
-    end
-    if hovered_tick then
-        local m = hovered_tick.m
-        local _, src = markers.event_date(m)
-        ui.tooltip(markers.label(m) .. "  ·  " .. (src or "?"))
-        if ui.clicked(hovered_tick.px - 5, y + 16, 10, th - 20) then markers.select(m.id, true) end
-    end
-
-    -- playhead
-    local c = util.palette.accent
-    love.graphics.setColor(c[1], c[2], c[3], 1)
-    love.graphics.setLineWidth(1.5)
-    love.graphics.line(hx, y + 16, hx, ay + 2)
-    love.graphics.polygon("fill", hx, y + 16, hx - 5, y + 10, hx + 5, y + 10)
-    -- current date readout
-    local lbl = ("%.0f"):format(w.playhead_date)
-    local showing = 0
-    for _, m in ipairs(markers.list) do
-        local d = markers.event_date(m)
-        if not d or d <= w.playhead_date + 1e-6 then showing = showing + 1 end
-    end
-    local info = lbl .. "   " .. showing .. "/" .. #markers.list
-    local iw = ui.font:getWidth(info) + 10
-    local ix = util.clamp(hx - iw / 2, x + 2, x + tw - iw - 2)
-    ui.set_color("bg", 0.9); love.graphics.rectangle("fill", ix, y + 2, iw, 14, 2, 2)
-    ui.text(info, ix + 5, y + 3, "accent")
-
-    -- drag the playhead (grab anywhere on the top half of the strip)
-    if ui.clicked(x, y, tw, 20) or (w.ph_drag and ui.mouse.down) then
-        w.ph_drag = true
-    end
-    if w.ph_drag then
-        if ui.mouse.down then
-            w.playhead = util.clamp((ui.mouse.x - ax) / aw, 0, 1)
-        else
-            w.ph_drag = nil
-        end
-    end
-    -- buttons: step to each event / show all
-    if ui.button("wm_tl_all", "ALL", x + tw - 52, y + 2, 44, 15, { bold = false, active = w.playhead >= 0.999 }) then
-        w.playhead = 1
-    end
-end
-
 function W.draw(w, ui, x, y, width, height)
     -- toolbar
     local bh = 26
@@ -1038,10 +920,6 @@ function W.draw(w, ui, x, y, width, height)
         w.tool = nil
         if w.link_mode then ui.sound("beep", { pitch = 1.2 }) else ui.sound("back") end
     end
-    if ui.button("wm_tool_timeline", "⊙ TIME", x + 318, y, 86, bh, { active = w.timeline, tip = "reveal markers over time" }) then
-        w.timeline = not w.timeline
-        ui.sound(w.timeline and "beep" or "back", { pitch = 1.1 })
-    end
     local zx = x + width - 3 * 34 - 52
     if ui.button("wm_zoom_out", "−", zx, y, 30, bh) then
         zoom_at(w, 1 / 1.6, w.rect.x + w.rect.w / 2, w.rect.y + w.rect.h / 2)
@@ -1054,31 +932,16 @@ function W.draw(w, ui, x, y, width, height)
         ui.sound("whoosh", { volume = 0.4 })
     end
 
-    -- pre-compute the playhead date so the map can dim future markers this frame
-    if w.timeline then
-        local lo, hi = markers.timeline_range()
-        if lo then
-            if hi - lo < 0.01 then hi = lo + 1 end
-            w.playhead = w.playhead or 1
-            w.playhead_date = lo + (hi - lo) * w.playhead
-        end
-    end
-
     -- map keeps the world's proportions; the rest goes to the list + editor
-    local tlh = w.timeline and 58 or 0
     local my = y + bh + 10
     local details_min = markers.selected and 326 or 250
-    local mh = math.floor(math.min(width / ASPECT, height - bh - 10 - details_min - 12 - tlh))
+    local mh = math.floor(math.min(width / ASPECT, height - bh - 10 - details_min - 12))
     mh = math.max(120, mh)
     local mw = math.floor(math.min(width, mh * ASPECT))
     w.rect = { x = x + (width - mw) / 2, y = my, w = mw, h = mh }
     draw_map(w, ui, w.rect)
 
     local dy = my + mh + 12
-    if w.timeline then
-        draw_timeline(w, ui, x, dy, width, 50)
-        dy = dy + 58
-    end
     local dh = y + height - dy
     if dh < 60 then return end
     local lw = math.floor(width * 0.34)

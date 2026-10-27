@@ -184,6 +184,7 @@ end
 
 function love.quit()
     if markers.dirty_at then markers.save() end
+    if require("src.board").dirty_at then require("src.board").save() end
     require("src.vault").flush(true)
 end
 
