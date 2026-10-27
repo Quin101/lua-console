@@ -1,0 +1,21 @@
+name: build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Windows exe and macOS app
+        run: ./tools/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QrawllerTerminal-win64
+          path: build/QrawllerTerminal-win64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QrawllerTerminal-macos
+          path: dist/QrawllerTerminal-macos.zip

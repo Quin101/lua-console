@@ -1,0 +1,4 @@
+build/
+dist/*
+!dist/QrawllerTerminal-win64.zip
+.DS_Store
