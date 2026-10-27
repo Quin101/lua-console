@@ -4,6 +4,8 @@
 local email = require("src.email")
 local util = require("src.util")
 
+local draw_picker, add_attachment  -- defined below
+
 local W = {
     title = "EMAIL",
     tab = "MAIL",
@@ -19,6 +21,8 @@ function W.load(w, ui)
     w.subject = ""
     w.body = ""
     w.visible = false
+    w.attach = {}
+    w.picker = nil
     w.result = nil          -- { ok, text, hint, at }
     w.sending = false
     w.send_at = nil
@@ -41,7 +45,7 @@ function W.update(w, dt, ui)
         w.result = { ok = ok, text = detail, hint = hint, at = ui.time(), n = n }
         if ok then
             ui.sound("ok"); ui.fx.flash("accent", 0.15)
-            w.to, w.subject, w.body = "", "", ""
+            w.to, w.subject, w.body, w.attach = "", "", "", {}
             ui.print("{accent}✓{} email sent to " .. (n or 1) .. " recipient" .. ((n or 1) == 1 and "" or "s"))
         else
             ui.sound("err"); ui.fx.glitch(0.25, 0.4)
@@ -139,31 +143,60 @@ local function draw_compose(w, ui, x, y, width, height)
     w.subject = ui.textfield("em_subj", w.subject, x, yy, width, 40, { label = "subject", placeholder = "subject line" })
     yy = yy + 46
 
-    -- body fills the rest, above the action row
+    -- attachments strip (chips) grows as files are added
+    w.attach = w.attach or {}
+    local attach_h = (#w.attach > 0) and 26 or 0
+
+    -- body fills the rest, above the attachments + action row
     local action_h = 34
-    local body_h = y + height - yy - action_h - 6
+    local body_h = y + height - yy - action_h - attach_h - 6
     if body_h > 40 then
         w.body = ui.textfield("em_body", w.body, x, yy, width, body_h, { label = "message", placeholder = "type your message…", multiline = true })
+        yy = yy + body_h + 6
+    end
+
+    -- attachment chips
+    if #w.attach > 0 then
+        local cx = x
+        local total = 0
+        for i = #w.attach, 1, -1 do
+            local a = w.attach[i]
+            total = total + (a.size or 0)
+            local label = "▪ " .. a.name .. "  " .. require("src.vault").size_str(a.size or 0)
+            local tw = ui.font:getWidth(label) + 24
+            ui.set_color("info", ui.hover(cx, yy, tw, 20) and 0.22 or 0.14)
+            love.graphics.rectangle("fill", cx, yy, tw, 20, 9, 9)
+            ui.set_color("info", 0.8); love.graphics.setLineWidth(1); love.graphics.rectangle("line", cx + 0.5, yy + 0.5, tw - 1, 19, 9, 9)
+            ui.text(label, cx + 8, yy + 2, "info")
+            local rx = cx + tw - 15
+            ui.text("×", rx + 2, yy + 2, ui.hover(rx, yy, 15, 20) and "err" or "dim")
+            if ui.clicked(rx, yy, 15, 20) then table.remove(w.attach, i); ui.sound("back") end
+            cx = cx + tw + 6
+        end
     end
 
     -- action row
     local ay = y + height - 26
     local ready = email.configured(w.cfg) and #rcpts > 0 and w.curl and not w.sending
-    if ui.button("em_send", w.sending and "SENDING…" or ("SEND" .. (#rcpts > 1 and (" ×" .. #rcpts) or "")), x, ay, 130, 26,
+    if ui.button("em_send", w.sending and "SENDING…" or ("SEND" .. (#rcpts > 1 and (" ×" .. #rcpts) or "")), x, ay, 118, 26,
         { tip = ready and "send the message" or "fill in recipient(s) first" }) then
         if ready then
             w.sending = true
-            w.pending = { to = rcpts, subject = w.subject, body = w.body, visible = w.visible }
+            w.pending = { to = rcpts, subject = w.subject, body = w.body, visible = w.visible, attachments = w.attach }
             w.send_at = ui.time() + 0.25
             w.result = nil
-            ui.sound("beep", { pitch = 1.1 }); ui.fx.sparks(x + 65, ay + 13, 10, "accent", 70)
+            ui.sound("beep", { pitch = 1.1 }); ui.fx.sparks(x + 59, ay + 13, 10, "accent", 70)
         else
             ui.sound("err", { volume = 0.5 })
             if not w.curl then w.result = { ok = false, text = "curl not found — can't send", at = ui.time() } end
         end
     end
-    if ui.button("em_clear", "CLEAR", x + 138, ay, 80, 26, { bold = false }) then
-        w.to, w.subject, w.body = "", "", ""; w.result = nil; ui.unfocus(); ui.sound("back")
+    if ui.button("em_attach", "+ ATTACH", x + 126, ay, 92, 26, { bold = false, tip = "attach a file from the vault (or drag one onto the window)" }) then
+        w.picker = { scroll = 0 }
+        ui.sound("beep", { pitch = 1.1 })
+    end
+    if ui.button("em_clear", "CLEAR", x + 226, ay, 72, 26, { bold = false }) then
+        w.to, w.subject, w.body, w.attach = "", "", "", {}; w.result = nil; ui.unfocus(); ui.sound("back")
     end
 
     -- status line
@@ -172,12 +205,68 @@ local function draw_compose(w, ui, x, y, width, height)
         local a = w.result.hint and 1 or util.clamp(1 - (age - 6) / 2, 0, 1)   -- errors with hints stay
         if a > 0 then
             local col = w.result.ok and "accent" or "err"
-            ui.text((w.result.ok and "✓ " or "✗ ") .. w.result.text, x + 226, ay + 5, col, ui.font, a)
+            ui.text((w.result.ok and "✓ " or "✗ ") .. w.result.text, x + 306, ay + 5, col, ui.font, a)
+        end
+        if w.result.hint then ui.text(w.result.hint, x, ay - (#w.attach > 0 and 46 or 20), "warn", ui.font) end
+    end
+
+    if w.picker then draw_picker(w, ui, x, y, width, height) end
+end
+
+-- read a file into an attachment; returns true or false+reason
+add_attachment = function(w, ui, name, data)
+    if #data > email.MAX_ATTACH_BYTES then return false, "that file is too large" end
+    for _, a in ipairs(w.attach) do if a.name == name and a.size == #data then return false, "already attached" end end
+    w.attach[#w.attach + 1] = { name = name, data = data, size = #data }
+    ui.sound("place", { volume = 0.5 }); ui.fx.flash("accent", 0.1)
+    return true
+end
+
+-- modal: pick a file from the vault to attach
+local function gather_vault(dir, out, depth)
+    local vault = require("src.vault")
+    for _, it in ipairs(vault.list(dir)) do
+        if it.kind == "folder" then if depth < 4 then gather_vault(it.path, out, depth + 1) end
+        else out[#out + 1] = it end
+    end
+end
+
+draw_picker = function(w, ui, x, y, width, height)
+    local vault = require("src.vault")
+    ui.set_color("bg", 0.82); love.graphics.rectangle("fill", x - 12, y - 30, width + 24, height + 44)
+    local pw, phh = math.min(width - 20, 440), math.min(height - 20, 380)
+    local px, py = x + (width - pw) / 2, y + (height - phh) / 2
+    ui.set_color("bg2", 0.98); love.graphics.rectangle("fill", px, py, pw, phh, 5, 5)
+    ui.set_color("accent", 0.8); love.graphics.setLineWidth(1); love.graphics.rectangle("line", px + 0.5, py + 0.5, pw - 1, phh - 1, 5, 5)
+    ui.text("ATTACH A FILE FROM THE VAULT", px + 12, py + 10, "white", ui.font_bold)
+    if ui.button("em_pick_close", "✕", px + pw - 32, py + 8, 24, 20) then w.picker = nil; return end
+    ui.text("or drag a file onto the window", px + 12, py + 28, "dim")
+
+    local all = {}; gather_vault(vault.ROOT, all, 1)
+    local lx, ly, lw, lh = px + 12, py + 48, pw - 24, phh - 58
+    local rh = 22
+    local visible = math.floor(lh / rh)
+    w.picker.scroll = util.clamp(w.picker.scroll, 0, math.max(0, #all - visible))
+    if #all == 0 then ui.text("the vault is empty — add files in the FILES tab first", lx, ly + 4, "dim") end
+    local first = math.floor(w.picker.scroll) + 1
+    for i = first, math.min(#all, first + visible - 1) do
+        local it = all[i]
+        local ry = ly + (i - first) * rh
+        local hov = ui.hover(lx, ry, lw, rh)
+        ui.set_color("accent", hov and 0.1 or 0.03); love.graphics.rectangle("fill", lx, ry + 1, lw, rh - 2, 2, 2)
+        local icon = it.kind == "image" and "■" or (it.kind == "text" and "≡" or "□")
+        ui.text(icon, lx + 6, ry + 3, it.kind == "image" and "info" or "dim")
+        ui.text((vault.pretty(it.path):gsub("^vault / ", "")), lx + 22, ry + 3, "text")
+        local sz = vault.size_str(it.size)
+        ui.text(sz, lx + lw - ui.font:getWidth(sz) - 2, ry + 3, "dim")
+        if ui.clicked(lx, ry, lw, rh) then
+            local data = vault.read(it.path)
+            local ok, why = add_attachment(w, ui, vault.basename(it.path), data)
+            if ok then ui.print("{info}▪{} attached {white}" .. vault.basename(it.path):gsub("{", "{{")); w.picker = nil
+            else ui.sound("err"); w.result = { ok = false, text = why, at = ui.time() } end
         end
     end
-    if w.result and w.result.hint then
-        ui.text(w.result.hint, x, ay - 20, "warn", ui.font)
-    end
+    if ui.press and not ui.press.used and not ui.hover(px, py, pw, phh) then w.picker = nil end
 end
 
 function W.draw(w, ui, x, y, width, height)
@@ -188,6 +277,21 @@ function W.draw(w, ui, x, y, width, height)
     else
         draw_compose(w, ui, x, y, width, height)
     end
+end
+
+-- dropping a file onto the window attaches it (when the MAIL tab is open)
+function W.filedropped(w, ui, file)
+    if ui.active_tab ~= W.tab or w.mode ~= "compose" then return false end
+    local name = file:getFilename():match("([^/\\]+)$") or "file"
+    file:open("r"); local data = file:read(); file:close()
+    local ok, why = add_attachment(w, ui, name, data)
+    if ok then ui.print("{info}\226\150\170{} attached {white}" .. name:gsub("{", "{{"))
+    else ui.sound("err"); w.result = { ok = false, text = name .. ": " .. why, at = ui.time() } end
+    return true
+end
+
+function W.wheelmoved(w, ui, dx, dy)
+    if w.picker then w.picker.scroll = math.max(0, w.picker.scroll - dy * 2) end
 end
 
 return W

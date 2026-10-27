@@ -26,7 +26,8 @@ The hacking commands are fake theatre. Nothing touches your real network.
   to pin a note (title + text), colour it, drop a photo on it, and **↔ LINK** cards with red string.
   Drag cards to arrange, drag the background to pan, wheel to zoom. Saved to its own file.
 - **Email** (the MAIL tab): a compose window for the email sender below — set up your
-  account, type recipients (comma-separated), subject and message, and press SEND.
+  account, type recipients (comma-separated), subject and message, attach files
+  (drag them onto the window or + ATTACH from the vault), and press SEND.
 - **Password forge** (the KEYS tab): generate strong passwords (length, character sets, avoid
   look-alikes), copy them, and rate the strength of any password you type — entropy, character
   mix and estimated crack time, all computed locally.
@@ -81,6 +82,10 @@ recipient you type — an ordinary mail-client send.
    the addresses with commas (`email send a@x.com, b@y.com`); it asks whether to
    show everyone (To) or hide them from each other (Bcc), up to 100 per message.
 4. `email config` — shows your settings with the password hidden.
+
+Attach files by dragging them onto the window (or + ATTACH to pick from the
+vault). The terminal `email send` also asks for vault files to attach. Total
+attachments are capped around 22 MB (providers usually cap near 25 MB).
 
 Your settings are saved in `email.cfg` in the save folder; keep an app password
 there rather than your main password. `curl` ships with macOS and Windows 10+.

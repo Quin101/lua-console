@@ -73,12 +73,34 @@ local function compose_and_send(t, to)
         if #lines > 500 then break end
     end
     local body = table.concat(lines, "\n")
+
+    -- attachments from the vault (comma-separated paths, blank to skip)
+    local vault = require("src.vault")
+    local attachments = {}
+    local att = t.ask("{dim}attach vault files? (comma-separated names, or blank): ")
+    for name in tostring(att):gmatch("[^,]+") do
+        name = name:gsub("^%s+", ""):gsub("%s+$", "")
+        if name ~= "" then
+            local path = name:match("^vault/") and name or vault.join(vault.ROOT, name)
+            if vault.exists(path) then
+                attachments[#attachments + 1] = { name = vault.basename(path), path = path }
+            else
+                t.print("{warn}▲{} not found in vault: " .. esc(name) .. "  {dim}(see {}ls{dim})")
+            end
+        end
+    end
+
     t.print("")
     local to_show = #rcpts <= 4 and table.concat(rcpts, ", ")
         or (table.concat({ rcpts[1], rcpts[2], rcpts[3] }, ", ") .. " +" .. (#rcpts - 3) .. " more")
     t.print("{dim}from {}" .. esc(c.from))
     t.print("{dim}to   {}" .. esc(to_show) .. "  {dim}(" .. #rcpts .. ", " .. (visible and "visible" or "hidden/bcc") .. ")")
     t.print("{dim}subj {}" .. esc(subject))
+    if #attachments > 0 then
+        local names = {}
+        for _, a in ipairs(attachments) do names[#names + 1] = a.name end
+        t.print("{dim}files {}" .. esc(table.concat(names, ", ")))
+    end
     local yes = t.ask("send to " .. #rcpts .. " recipient" .. (#rcpts == 1 and "" or "s") .. "? [y/N] "):lower()
     if yes ~= "y" and yes ~= "yes" then
         t.print("{dim}cancelled")
@@ -88,7 +110,7 @@ local function compose_and_send(t, to)
 
     t.spin("connecting to " .. esc(c.host), 0.6)
     t.print("{dim}handing off to " .. esc(c.host) .. "…")
-    local ok, detail, hint = email.send(c, rcpts, subject, body, { visible = visible })
+    local ok, detail, hint = email.send(c, rcpts, subject, body, { visible = visible, attachments = attachments })
     if ok then
         t.flash("accent", 0.15)
         t.print("{accent}✓ sent{}  {dim}" .. esc(detail))

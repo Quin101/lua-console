@@ -58,24 +58,73 @@ local function real(name)
     return base .. "/" .. name
 end
 
-local function rfc822(c, to, subject, body)
+-- attachment content types by extension
+local MIME = {
+    png = "image/png", jpg = "image/jpeg", jpeg = "image/jpeg", gif = "image/gif",
+    bmp = "image/bmp", webp = "image/webp", svg = "image/svg+xml",
+    pdf = "application/pdf", zip = "application/zip",
+    txt = "text/plain", md = "text/markdown", csv = "text/csv", log = "text/plain",
+    json = "application/json", xml = "application/xml", html = "text/html",
+    doc = "application/msword", docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xls = "application/vnd.ms-excel", xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    mp3 = "audio/mpeg", wav = "audio/wav", mp4 = "video/mp4", lua = "text/plain",
+}
+function email.mime_type(name)
+    return MIME[(tostring(name):match("%.([%w]+)$") or ""):lower()] or "application/octet-stream"
+end
+
+-- base64-encode raw bytes and wrap at 76 columns with CRLF (RFC 2045)
+local function b64(data)
+    local enc = love.data.encode("string", "base64", data, 0)   -- no line breaks, we add our own
+    local out = {}
+    for i = 1, #enc, 76 do out[#out + 1] = enc:sub(i, i + 75) end
+    return table.concat(out, "\r\n")
+end
+
+email.MAX_ATTACH_BYTES = 22 * 1024 * 1024   -- ~22 MB (most providers cap around 25)
+
+-- builds the full message. `attachments` is a list of { name = ..., data = ... }.
+local function build_message(c, to, subject, body, attachments)
     local from = (c.name and c.name ~= "") and (c.name .. " <" .. c.from .. ">") or c.from
     local date = os.date("!%a, %d %b %Y %H:%M:%S +0000")
     local id = ("<%s.%s@qrawller>"):format(os.time(), tostring(math.random(100000, 999999)))
-    -- dots at the start of a line must be escaped for SMTP (dot-stuffing)
-    body = tostring(body):gsub("\r\n", "\n"):gsub("\n", "\r\n"):gsub("\r\n%.", "\r\n..")
-    local headers = {
+    local base = {
         "From: " .. from,
         "To: " .. to,
         "Subject: " .. subject,
         "Date: " .. date,
         "Message-ID: " .. id,
         "MIME-Version: 1.0",
-        'Content-Type: text/plain; charset="UTF-8"',
-        "Content-Transfer-Encoding: 8bit",
-        "X-Mailer: Qrawller Terminal",
     }
-    return table.concat(headers, "\r\n") .. "\r\n\r\n" .. body .. "\r\n"
+    -- SMTP dot-stuffing on the plain-text body
+    body = tostring(body):gsub("\r\n", "\n"):gsub("\n", "\r\n"):gsub("\r\n%.", "\r\n..")
+
+    if not attachments or #attachments == 0 then
+        base[#base + 1] = 'Content-Type: text/plain; charset="UTF-8"'
+        base[#base + 1] = "Content-Transfer-Encoding: 8bit"
+        base[#base + 1] = "X-Mailer: Qrawller Terminal"
+        return table.concat(base, "\r\n") .. "\r\n\r\n" .. body .. "\r\n"
+    end
+
+    local boundary = "qrawller_" .. os.time() .. "_" .. math.random(100000, 999999)
+    base[#base + 1] = 'Content-Type: multipart/mixed; boundary="' .. boundary .. '"'
+    base[#base + 1] = "X-Mailer: Qrawller Terminal"
+    local parts = { table.concat(base, "\r\n") .. "\r\n" }
+    -- text part
+    parts[#parts + 1] = "--" .. boundary .. "\r\n" ..
+        'Content-Type: text/plain; charset="UTF-8"\r\n' ..
+        "Content-Transfer-Encoding: 8bit\r\n\r\n" .. body .. "\r\n"
+    -- attachment parts
+    for _, a in ipairs(attachments) do
+        local name = (a.name:gsub('[\r\n"]', ""))
+        parts[#parts + 1] = "--" .. boundary .. "\r\n" ..
+            "Content-Type: " .. email.mime_type(name) .. '; name="' .. name .. '"\r\n' ..
+            "Content-Transfer-Encoding: base64\r\n" ..
+            'Content-Disposition: attachment; filename="' .. name .. '"\r\n\r\n' ..
+            b64(a.data) .. "\r\n"
+    end
+    parts[#parts + 1] = "--" .. boundary .. "--\r\n"
+    return table.concat(parts)
 end
 
 -- splits "a@x.com, b@y.com; c@z.com" into a clean, de-duplicated list of addresses
@@ -111,6 +160,21 @@ function email.send(c, to, subject, body, opts)
     -- the visible To: header (everyone when visible, otherwise hide the list)
     local to_header = (opts.visible or #rcpts == 1) and table.concat(rcpts, ", ") or "undisclosed-recipients:;"
 
+    -- read any attachments (each is { name, path = vault path } or { name, data })
+    local attachments = {}
+    local total = 0
+    for _, a in ipairs(opts.attachments or {}) do
+        local data = a.data
+        if not data and a.path then data = love.filesystem.read(a.path) end
+        if not data then return false, "could not read attachment: " .. tostring(a.name) end
+        total = total + #data
+        attachments[#attachments + 1] = { name = a.name or "file", data = data }
+    end
+    if total > email.MAX_ATTACH_BYTES then
+        return false, ("attachments too large (%.1f MB) — keep the total under %d MB")
+            :format(total / 1024 / 1024, math.floor(email.MAX_ATTACH_BYTES / 1024 / 1024))
+    end
+
     local port = c.port or "465"
     local secure = c.secure or (port == "587" and "starttls" or "ssl")
     local scheme = (secure == "ssl") and "smtps" or "smtp"
@@ -118,7 +182,7 @@ function email.send(c, to, subject, body, opts)
 
     local msg_name = "email_msg.txt"
     local cfg_name = "email_curl.cfg"
-    love.filesystem.write(msg_name, rfc822(c, to_header, subject, body))
+    love.filesystem.write(msg_name, build_message(c, to_header, subject, body, attachments))
 
     -- put the url, credentials and options in a curl config file so the
     -- password never appears in the process list / command line
