@@ -46,6 +46,22 @@ return {
         end,
     },
     {
+        name = "link",
+        help = "connect two markers on the map",
+        usage = "link <a> <b> [label]",
+        category = "map",
+        run = function(t, args, rest)
+            local a = markers.find(args[1])
+            local b = markers.find(args[2])
+            if not a or not b then return t.print("usage: link <marker> <marker> [label]  ·  see {accent}markers", "err") end
+            local label = #args > 2 and rest:gsub("^%S+%s+%S+%s*", "") or nil
+            markers.link(a.id, b.id, label)
+            t.sound("lock", { volume = 0.6 })
+            t.print("{accent}↔{} linked {white}" .. esc(markers.label(a)) .. "{} ↔ {white}" .. esc(markers.label(b)) ..
+                (label and ("  {dim}(" .. esc(label) .. ")") or ""))
+        end,
+    },
+    {
         name = "dossier",
         help = "print everything known about a marker",
         usage = "dossier <name or id>",
@@ -71,10 +87,33 @@ return {
             end
             t.print("{dim}" .. t.pad("location", 16) .. "{}" .. markers.coords(m.lat, m.lon))
             t.print("{dim}" .. t.pad("on file since", 16) .. "{}" .. esc(m.created or "?"))
+            if m.tag and m.tag ~= "" then
+                local ti = markers.tag_info(m.tag)
+                t.print("{dim}" .. t.pad("tag", 16) .. "{}{" .. ti[3] .. "}" .. esc(ti[2]))
+            end
             if m.notes and m.notes ~= "" then
                 t.print("")
                 t.print("{dim}" .. (victim and "notes" or "description"))
                 t.type(esc(m.notes), "text", 140)
+            end
+            local links = markers.links_of(m.id)
+            if #links > 0 then
+                t.print("")
+                t.print("{dim}connections")
+                for _, e in ipairs(links) do
+                    t.print("  {accent}↔{} " .. esc(markers.label(e.other)) ..
+                        (e.link.label and e.link.label ~= "" and ("  {dim}(" .. esc(e.link.label) .. ")") or ""))
+                    t.sound("tick", { pitch = 0.9, volume = 0.4 }); t.wait(0.04)
+                end
+            end
+            local ev = markers.evidence_list(m)
+            if #ev > 0 then
+                t.print("")
+                t.print("{dim}evidence")
+                for _, p in ipairs(ev) do
+                    t.print("  {info}≡{} " .. esc(require("src.vault").basename(p)))
+                    t.sound("tick", { pitch = 1.1, volume = 0.4 }); t.wait(0.04)
+                end
             end
             t.print("{dim}" .. string.rep("─", 46))
             t.print("")

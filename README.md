@@ -19,11 +19,21 @@ The hacking commands are fake theatre. Nothing touches your real network.
     (`%APPDATA%\qrawller\` on Windows, `~/Library/Application Support/qrawller/` on Mac).
   - **Photos**: drag image files onto the window to attach them to the selected marker. They show
     in the editor, as a thumbnail on the map, and full-screen when clicked.
+  - **Tags** (suspect, witness, victim, person of interest, safehouse, sighting): colour-code markers.
+  - **Links**: the ↔ LINK tool connects two markers with a labelled line; the editor lists them as chips.
+  - **Evidence**: drag any non-image file onto a selected marker (or use + FILE) to attach a vault file.
+  - **Timeline** (⊙ TIME): a scrubber under the map; drag the playhead to reveal markers by date.
+- **Case board** (the BOARD tab): a corkboard of marker cards joined by red string. Drag cards to
+  arrange them, drag the background to pan, wheel to zoom, and LINK to connect cards.
+- **Password forge** (the KEYS tab): generate strong passwords (length, character sets, avoid
+  look-alikes), copy them, and rate the strength of any password you type — entropy, character
+  mix and estimated crack time, all computed locally.
 - **Files panel** (the FILES tab, or `files` / F3): a real file vault stored under the save folder.
   Make folders and text documents, import images and any other files by dragging them onto the window,
   edit text in place, preview images (list or grid view), rename, delete, and open the folder on disk.
-- **Terminal**: `help` lists everything. Map: `markers`, `locate <name>`, `dossier <name>`.
-  Files: `ls`, `cat <file>`, `mkdir <name>`, `write <file> <text>`, `files`.
+- **Terminal**: `help` lists everything. Map: `markers`, `locate <name>`, `dossier <name>`,
+  `link <a> <b> [label]`, `board`, `timeline`. Files: `ls`, `cat`, `mkdir`, `write`, `files`.
+  Tools: `password`.
 - **Sound**: dark synthesized sounds (sub-bass hits, distortion, reverb) and a low ambient drone.
   Turn them off with `sound off`, or set `ambient = false` in `config.lua`.
 
@@ -48,7 +58,7 @@ macOS will block it because it isn't signed: go to **System Settings → Privacy
 | `ctrl+l` | clear |
 | `pgup` `pgdn` / mouse wheel | scroll |
 | `F2` | show/hide the side panel |
-| `F3` | switch tab (MAP / FILES) |
+| `F3` | cycle tabs (MAP / FILES / BOARD / KEYS) |
 | `esc` | cancel placement / close viewer or editor |
 | `F11` | fullscreen |
 | click a panel title | collapse it |
@@ -125,15 +135,13 @@ src/vault.lua       the file vault (folders, documents, imported files)
 src/images.lua      image loading/caching + full-screen viewer helpers
 assets/worldmask.lua  0.5° land mask (from global-land-mask, MIT; NOAA GLOBE data, public domain)
 commands/           terminal commands, one file each
-widgets/            panels: worldmap.lua (MAP tab), files.lua (FILES tab)
+widgets/            panels: worldmap.lua, files.lua, caseboard.lua, password.lua
 tools/              build scripts
 ```
 
 ## Ideas to add next
 
 **Panels**
-- **Links between markers**: draw glowing connection lines between victims and places ("seen at", "lives at").
-- **Timeline**: a scrubber under the map that shows markers by their dates.
 - **File browser**: browse a fake file system of a hacked machine. Double-click files to "decrypt" them.
 - **Password cracker**: pick a hash, choose wordlist/brute-force, and watch guesses scroll by with a live attempts/sec graph.
 - **Radar sweep**: a rotating radar that finds "devices" as blips. Click one to scan it.

@@ -25,7 +25,7 @@ return {
                     table.insert(groups[g], c)
                 end
             end
-            local rank = { core = 1, map = 2, files = 3, hack = 4, fx = 5, fun = 6, system = 7 }
+            local rank = { core = 1, map = 2, files = 3, tools = 4, hack = 5, fx = 6, fun = 7, system = 8 }
             table.sort(order, function(a, b) return (rank[a] or 9) < (rank[b] or 9) end)
             t.print("")
             for _, g in ipairs(order) do

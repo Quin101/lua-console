@@ -1,7 +1,9 @@
 -- Map markers: stored in the save folder (markers.lua) and shared by the map widget and commands.
 --   kind = "victim":  name, age, dob, dod, ip, address, notes
 --   kind = "place":   name, notes
-local markers = { list = {}, selected = nil, fly = nil, dirty_at = nil }
+-- Markers can be tagged (suspect/witness/...), linked to each other, and have
+-- evidence files from the vault attached.
+local markers = { list = {}, links = {}, selected = nil, fly = nil, dirty_at = nil }
 
 local FILE = "markers.lua"
 
@@ -11,22 +13,44 @@ markers.VICTIM_FIELDS = {
 }
 markers.PLACE_FIELDS = { { "name", "name" }, { "notes", "description" } }
 
-local KEYS = { "id", "kind", "lat", "lon", "created", "name", "age", "dob", "dod", "ip", "address", "notes", "photos" }
+-- optional classifier shown as a coloured chip; the first is "none"
+markers.TAGS = {
+    { "", "untagged", "dim" },
+    { "suspect", "suspect", "err" },
+    { "witness", "witness", "info" },
+    { "victim", "victim", "accent" },
+    { "poi", "person of interest", "warn" },
+    { "safehouse", "safehouse", "ok" },
+    { "sighting", "sighting", "white" },
+}
+
+local KEYS = { "id", "kind", "lat", "lon", "created", "name", "age", "dob", "dod", "ip", "address", "notes", "photos", "evidence", "tag", "bx", "by" }
 local images = require("src.images")
 
 markers.PHOTO_DIR = "photos"
 
+local function q(v)
+    return type(v) == "number" and tostring(v) or ("%q"):format(tostring(v))
+end
+
 function markers.load()
-    markers.list = {}
+    markers.list, markers.links = {}, {}
     if not love.filesystem.getInfo(FILE) then return 0 end
     local ok, chunk = pcall(love.filesystem.load, FILE)
     if not ok or not chunk then return 0 end
     setfenv(chunk, {}) -- the file is plain data; give it no access to anything
     local ok2, data = pcall(chunk)
     if ok2 and type(data) == "table" then
-        for _, m in ipairs(data) do
+        -- new format: { markers = {...}, links = {...} }   old format: { {marker}, ... }
+        local list = data.markers or data
+        for _, m in ipairs(list) do
             if type(m) == "table" and tonumber(m.lat) and tonumber(m.lon) then
                 markers.list[#markers.list + 1] = m
+            end
+        end
+        for _, l in ipairs(data.links or {}) do
+            if type(l) == "table" and l.a and l.b then
+                markers.links[#markers.links + 1] = { a = l.a, b = l.b, label = l.label }
             end
         end
     end
@@ -34,18 +58,22 @@ function markers.load()
 end
 
 function markers.save()
-    local out = { "-- Qrawller map markers\nreturn {\n" }
+    local out = { "-- Qrawller map markers\nreturn {\n    markers = {\n" }
     for _, m in ipairs(markers.list) do
         local parts = {}
         for _, k in ipairs(KEYS) do
             local v = m[k]
-            if v ~= nil and v ~= "" then
-                parts[#parts + 1] = k .. " = " .. (type(v) == "number" and tostring(v) or ("%q"):format(tostring(v)))
-            end
+            if v ~= nil and v ~= "" then parts[#parts + 1] = k .. " = " .. q(v) end
         end
-        out[#out + 1] = "    { " .. table.concat(parts, ", ") .. " },\n"
+        out[#out + 1] = "        { " .. table.concat(parts, ", ") .. " },\n"
     end
-    out[#out + 1] = "}\n"
+    out[#out + 1] = "    },\n    links = {\n"
+    for _, l in ipairs(markers.links) do
+        local parts = { "a = " .. l.a, "b = " .. l.b }
+        if l.label and l.label ~= "" then parts[#parts + 1] = "label = " .. q(l.label) end
+        out[#out + 1] = "        { " .. table.concat(parts, ", ") .. " },\n"
+    end
+    out[#out + 1] = "    },\n}\n"
     love.filesystem.write(FILE, table.concat(out))
     markers.dirty_at = nil
 end
@@ -115,12 +143,97 @@ function markers.remove_photo(m, path)
     set_photos(m, list)
 end
 
+-- evidence: references to files in the vault (not copies), stored as "path|path|..."
+function markers.evidence_list(m)
+    local out = {}
+    for p in tostring(m.evidence or ""):gmatch("[^|]+") do
+        if love.filesystem.getInfo(p) then out[#out + 1] = p end
+    end
+    return out
+end
+
+function markers.add_evidence(m, vault_path)
+    local list = markers.evidence_list(m)
+    for _, p in ipairs(list) do if p == vault_path then return false end end
+    list[#list + 1] = vault_path
+    m.evidence = table.concat(list, "|")
+    markers.save()
+    return true
+end
+
+function markers.remove_evidence(m, vault_path)
+    local list = markers.evidence_list(m)
+    for i, p in ipairs(list) do
+        if p == vault_path then table.remove(list, i); break end
+    end
+    m.evidence = #list > 0 and table.concat(list, "|") or nil
+    markers.save()
+end
+
+-- links between two markers --------------------------------------------------
+
+function markers.link(a, b, label)
+    if a == b then return nil end
+    for _, l in ipairs(markers.links) do
+        if (l.a == a and l.b == b) or (l.a == b and l.b == a) then
+            l.label = label or l.label
+            markers.save()
+            return l
+        end
+    end
+    local l = { a = a, b = b, label = label }
+    markers.links[#markers.links + 1] = l
+    markers.save()
+    return l
+end
+
+function markers.unlink(a, b)
+    for i, l in ipairs(markers.links) do
+        if (l.a == a and l.b == b) or (l.a == b and l.b == a) then
+            table.remove(markers.links, i)
+            markers.save()
+            return true
+        end
+    end
+    return false
+end
+
+-- links touching a marker, as { other = marker, link = l }
+function markers.links_of(id)
+    local out = {}
+    for _, l in ipairs(markers.links) do
+        local other
+        if l.a == id then other = markers.get(l.b) elseif l.b == id then other = markers.get(l.a) end
+        if other then out[#out + 1] = { other = other, link = l } end
+    end
+    return out
+end
+
+function markers.are_linked(a, b)
+    for _, l in ipairs(markers.links) do
+        if (l.a == a and l.b == b) or (l.a == b and l.b == a) then return l end
+    end
+end
+
+-- tags -----------------------------------------------------------------------
+
+function markers.tag_info(name)
+    for _, t in ipairs(markers.TAGS) do
+        if t[1] == (name or "") then return t end
+    end
+    return markers.TAGS[1]
+end
+
 function markers.remove(id)
     for i, m in ipairs(markers.list) do
         if m.id == id then
             for _, p in ipairs(markers.photo_list(m)) do
                 love.filesystem.remove(p)
                 images.forget(p)
+            end
+            -- drop any links touching this marker (evidence files are left in the vault)
+            for j = #markers.links, 1, -1 do
+                if markers.links[j].a == id or markers.links[j].b == id then table.remove(markers.links, j) end
             end
             table.remove(markers.list, i)
             if markers.selected == id then markers.selected = nil end
@@ -171,6 +284,57 @@ end
 
 function markers.coords(lat, lon)
     return ("%.4f°%s  %.4f°%s"):format(math.abs(lat), lat >= 0 and "N" or "S", math.abs(lon), lon >= 0 and "E" or "W")
+end
+
+-- timeline -------------------------------------------------------------------
+-- turn a free-text date into a sortable number (year + fraction), loosely.
+
+local MONTHS = {
+    jan = 1, feb = 2, mar = 3, apr = 4, may = 5, jun = 6,
+    jul = 7, aug = 8, sep = 9, oct = 10, nov = 11, dec = 12,
+}
+
+function markers.parse_date(s)
+    s = tostring(s or ""):lower()
+    local y = s:match("(1%d%d%d)") or s:match("(20%d%d)") or s:match("(2%d%d%d)")
+    if not y then return nil end
+    y = tonumber(y)
+    local mo, d
+    -- YYYY-MM-DD
+    local a, b = s:match(y .. "%D(%d%d?)%D(%d%d?)")
+    if a then mo, d = tonumber(a), tonumber(b) end
+    -- DD/MM/YYYY or MM/DD/YYYY (assume day/month unless > 12)
+    if not mo then
+        local p, q = s:match("(%d%d?)%D(%d%d?)%D" .. y)
+        if p then
+            p, q = tonumber(p), tonumber(q)
+            if p > 12 then mo, d = q, p else mo, d = p, q end
+        end
+    end
+    -- month name
+    if not mo then
+        for name, num in pairs(MONTHS) do if s:find(name, 1, true) then mo = num break end end
+    end
+    mo = (mo and mo >= 1 and mo <= 12) and mo or nil
+    d = (d and d >= 1 and d <= 31) and d or nil
+    return y + ((mo or 1) - 1) / 12 + ((d or 1) - 1) / 372, (mo ~= nil), (d ~= nil)
+end
+
+-- the date a marker sits on the timeline, and a label for it
+function markers.event_date(m)
+    local src
+    if m.kind == "victim" then src = (m.dod ~= "" and m.dod) or (m.dob ~= "" and m.dob) end
+    src = src or m.created
+    return markers.parse_date(src), src
+end
+
+function markers.timeline_range()
+    local lo, hi
+    for _, m in ipairs(markers.list) do
+        local d = markers.event_date(m)
+        if d then lo = math.min(lo or d, d); hi = math.max(hi or d, d) end
+    end
+    return lo, hi
 end
 
 return markers

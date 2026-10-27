@@ -9,6 +9,7 @@ local util = require("src.util")
 local images = require("src.images")
 
 local ASPECT = 360 / (world.LAT_MAX - world.LAT_MIN)
+local draw_evidence_picker  -- defined before W.draw
 
 local DOT_SHADER = [[
 extern number sweep;
@@ -71,13 +72,20 @@ end
 
 -- drawing helpers ------------------------------------------------------------------
 
-local function draw_victim(x, y, s, a, time, id, selected)
-    local acc, bg, white = util.palette.accent, util.palette.bg, util.palette.white
+-- the colour a marker is drawn in: its tag colour, else the kind default
+local function marker_color(m)
+    local t = markers.tag_info(m.tag)
+    if t[1] ~= "" then return util.color(t[3]) end
+    return m.kind == "victim" and util.palette.accent or util.palette.white
+end
+
+local function draw_victim(x, y, s, a, time, id, selected, col)
+    local c, bg, white = col or util.palette.accent, util.palette.bg, util.palette.white
     local pulse = (time * 0.65 + id * 0.37) % 1
     love.graphics.setLineWidth(1)
-    love.graphics.setColor(acc[1], acc[2], acc[3], (1 - pulse) * 0.75 * a)
+    love.graphics.setColor(c[1], c[2], c[3], (1 - pulse) * 0.75 * a)
     love.graphics.circle("line", x, y, s + pulse * 20)
-    love.graphics.setColor(acc[1], acc[2], acc[3], a)
+    love.graphics.setColor(c[1], c[2], c[3], a)
     love.graphics.polygon("fill", x, y - s, x + s, y, x, y + s, x - s, y)
     love.graphics.setColor(bg[1], bg[2], bg[3], a)
     love.graphics.polygon("fill", x, y - s * 0.4, x + s * 0.4, y, x, y + s * 0.4, x - s * 0.4, y)
@@ -87,8 +95,8 @@ local function draw_victim(x, y, s, a, time, id, selected)
     end
 end
 
-local function draw_place(x, y, s, a, selected)
-    local c, bg = util.palette.white, util.palette.bg
+local function draw_place(x, y, s, a, selected, col)
+    local c, bg = col or util.palette.white, util.palette.bg
     love.graphics.setLineWidth(1.5)
     love.graphics.setColor(bg[1], bg[2], bg[3], a)
     love.graphics.circle("fill", x, y, s)
@@ -99,6 +107,33 @@ local function draw_place(x, y, s, a, selected)
         local acc = util.palette.accent
         love.graphics.setColor(acc[1], acc[2], acc[3], a)
         love.graphics.circle("line", x, y, s + 3)
+    end
+end
+
+-- a connection line between two markers, with flowing dashes and a label
+local function draw_link(ui, x1, y1, x2, y2, label, time, strong)
+    local dx, dy = x2 - x1, y2 - y1
+    local len = math.sqrt(dx * dx + dy * dy)
+    if len < 1 then return end
+    local acc = util.palette.accent
+    local a = strong and 0.9 or 0.4
+    love.graphics.setColor(acc[1], acc[2], acc[3], a * 0.4)
+    love.graphics.setLineWidth(strong and 1.6 or 1)
+    love.graphics.line(x1, y1, x2, y2)
+    -- flowing dashes
+    local ux, uy = dx / len, dy / len
+    local gap = 14
+    local off = (time * 40) % gap
+    love.graphics.setColor(acc[1], acc[2], acc[3], a)
+    for d = off, len, gap do
+        love.graphics.line(x1 + ux * d, y1 + uy * d, x1 + ux * math.min(d + 5, len), y1 + uy * math.min(d + 5, len))
+    end
+    if label and label ~= "" and len > 50 then
+        local mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        local tw = ui.font:getWidth(label) + 8
+        ui.set_color("bg", 0.8)
+        love.graphics.rectangle("fill", mx - tw / 2, my - 8, tw, 15, 2, 2)
+        ui.text(label, mx - tw / 2 + 4, my - 6, strong and "white" or "dim")
     end
 end
 
@@ -143,17 +178,22 @@ function W.load(w, ui)
     w.cx, w.cy, w.tcx, w.tcy = 0.5, 0.5, 0.5, 0.5
     w.vx, w.vy = 0, 0
     w.tool = nil
+    w.link_mode = false
+    w.link_from = nil
+    w.timeline = false
+    w.playhead = 1
     w.filter = "all"
     w.search = ""
     w.list_scroll = 0
     w.drops = {}
     w.shader = love.graphics.newShader(DOT_SHADER)
-    if #markers.list == 0 then markers.load() end
+    if #markers.list == 0 and #markers.links == 0 then markers.load() end
 end
 
 function W.status(w)
     local v, p = markers.count()
-    return v .. " victims  ·  " .. p .. " places"
+    local l = #markers.links
+    return v .. " victims  ·  " .. p .. " places" .. (l > 0 and ("  ·  " .. l .. " links") or "")
 end
 
 function W.update(w, dt, ui)
@@ -177,38 +217,55 @@ end
 
 function W.keypressed(w, ui, key)
     if key == "escape" then
+        if w.link_mode or w.link_from then w.link_mode, w.link_from = false, nil; ui.sound("back"); return true end
         if w.tool then w.tool = nil; ui.sound("back"); return true end
+        if w.evidence_pick then w.evidence_pick = nil; ui.sound("back"); return true end
         if markers.selected then markers.selected = nil; return true end
     end
     return false
 end
 
--- dropping an image onto the window attaches it to the selected marker
+-- dropping a file onto the window: images become photos, anything else becomes
+-- evidence (imported into the vault's evidence/ folder and referenced)
 function W.filedropped(w, ui, file)
     local m = markers.selected and markers.get(markers.selected)
     if not m or ui.active_tab ~= W.tab then return false end
-    local name = file:getFilename():match("([^/\\]+)$") or "photo.png"
-    if not images.is_image_name(name) then return false end
+    local name = file:getFilename():match("([^/\\]+)$") or "file"
     file:open("r")
     local data = file:read()
     file:close()
-    local path, err = markers.add_photo(m, name, data)
-    if path then
-        w.photo_i = w.photo_i or {}
-        w.photo_i[m.id] = #markers.photo_list(m)
-        w.drop_flash = ui.time()
-        ui.sound("place")
-        ui.fx.flash("accent", 0.12)
-        ui.print("{accent}◆{} photo attached to {white}" .. markers.label(m):gsub("{", "{{") .. "{}  {dim}" .. name:gsub("{", "{{"))
+    if images.is_image_name(name) then
+        local path, err = markers.add_photo(m, name, data)
+        if path then
+            w.photo_i = w.photo_i or {}
+            w.photo_i[m.id] = #markers.photo_list(m)
+            w.drop_flash = ui.time()
+            ui.sound("place")
+            ui.fx.flash("accent", 0.12)
+            ui.print("{accent}◆{} photo attached to {white}" .. markers.label(m):gsub("{", "{{") .. "{}  {dim}" .. name:gsub("{", "{{"))
+        else
+            ui.sound("err")
+            ui.print("{err}✗{} " .. name:gsub("{", "{{") .. ": " .. err)
+        end
     else
-        ui.sound("err")
-        ui.print("{err}✗{} " .. name:gsub("{", "{{") .. ": " .. err)
+        local vault = require("src.vault")
+        vault.init()
+        love.filesystem.createDirectory(vault.join(vault.ROOT, "evidence"))
+        local path = vault.import(vault.join(vault.ROOT, "evidence"), name, data)
+        markers.add_evidence(m, path)
+        w.drop_flash = ui.time()
+        ui.sound("place"); ui.fx.flash("accent", 0.12)
+        ui.print("{accent}≡{} evidence attached to {white}" .. markers.label(m):gsub("{", "{{") .. "{}  {dim}" .. name:gsub("{", "{{"))
     end
     return true
 end
 
 function W.wheelmoved(w, ui, dx, dy)
     local mx, my = ui.mouse.x, ui.mouse.y
+    if w.evidence_pick then
+        w.evidence_pick.scroll = math.max(0, w.evidence_pick.scroll - dy * 2)
+        return
+    end
     if in_rect(w.rect, mx, my) then
         zoom_at(w, 1.25 ^ dy, mx, my)
         ui.sound("tick", { pitch = dy > 0 and 1.2 or 0.8, volume = 0.5 })
@@ -237,7 +294,7 @@ end
 local function draw_map(w, ui, r)
     local time = ui.time()
     local mx, my = ui.mouse.x, ui.mouse.y
-    local hover_map = in_rect(r, mx, my)
+    local hover_map = in_rect(r, mx, my) and not w.evidence_pick
     local dpi = love.graphics.getDPIScale()
 
     ui.set_color("bg", 0.92)
@@ -294,7 +351,22 @@ local function draw_map(w, ui, r)
         local drop = w.drops[m.id] and util.clamp((time - w.drops[m.id]) / 0.55, 0, 1) or 1
         sy = sy - (1 - bounce(drop)) * 46
         pos[m.id] = { sx, sy, drop }
-        if not w.tool and hover_map and math.abs(mx - sx) < 10 and math.abs(my - sy) < 10 then hovered = m end
+        if hover_map and math.abs(mx - sx) < 10 and math.abs(my - sy) < 10 then hovered = m end
+    end
+
+    -- connection lines (under the markers)
+    for _, l in ipairs(markers.links) do
+        local pa, pb = pos[l.a], pos[l.b]
+        if pa and pb then
+            local strong = markers.selected == l.a or markers.selected == l.b
+            draw_link(ui, pa[1], pa[2], pb[1], pb[2], l.label, time, strong)
+        end
+    end
+    -- rubber-band while linking
+    if w.link_from and pos[w.link_from] then
+        local pa = pos[w.link_from]
+        local tx, ty = (hovered and hovered.id ~= w.link_from) and pos[hovered.id][1] or mx, (hovered and hovered.id ~= w.link_from) and pos[hovered.id][2] or my
+        draw_link(ui, pa[1], pa[2], tx, ty, nil, time, true)
     end
 
     -- crosshair on the selected marker
@@ -306,16 +378,28 @@ local function draw_map(w, ui, r)
         love.graphics.line(p[1], r.y, p[1], r.y + r.h)
     end
 
+    -- timeline: fade markers dated after the playhead
+    local ph_date = w.timeline and w.playhead_date or nil
+    local function tl_fade(m)
+        if not ph_date then return 1 end
+        local d = markers.event_date(m)
+        if not d then return 0.9 end
+        return d <= ph_date + 1e-6 and 1 or 0.12
+    end
+
     for _, m in ipairs(markers.list) do
         local p = pos[m.id]
         if p[1] > r.x - 30 and p[1] < r.x + r.w + 30 and p[2] > r.y - 30 and p[2] < r.y + r.h + 30 then
             local hov = hovered == m
             local s = ui.ease("mk_s_" .. m.id, hov and 8.5 or 6, 16)
             local selected = markers.selected == m.id
+            local fade = tl_fade(m)
+            local col = marker_color(m)
+            if w.link_from == m.id then col = util.palette.white end
             if m.kind == "victim" then
-                draw_victim(p[1], p[2], s, 1, time, m.id, selected)
+                draw_victim(p[1], p[2], s, fade, time, m.id, selected and fade > 0.5, col)
             else
-                draw_place(p[1], p[2], s - 1, 1, selected)
+                draw_place(p[1], p[2], s - 1, fade, selected and fade > 0.5, col)
             end
             if p[3] < 1 then
                 ui.set_color("white", 1 - p[3])
@@ -356,17 +440,35 @@ local function draw_map(w, ui, r)
 
     -- mouse interaction
     if hovered then
-        ui.tooltip(markers.label(hovered) .. "  ·  " .. markers.coords(hovered.lat, hovered.lon))
+        local tip = markers.label(hovered) .. "  ·  " .. markers.coords(hovered.lat, hovered.lon)
+        if w.link_mode then tip = w.link_from and "click to link to " .. markers.label(hovered) or "click to start a link from " .. markers.label(hovered) end
+        ui.tooltip(tip)
         if ui.clicked(pos[hovered.id][1] - 10, pos[hovered.id][2] - 10, 20, 20) then
-            markers.select(hovered.id)
-            w.mdrag = { id = hovered.id, x = mx, y = my, moved = false }
-            ui.sound("beep", { pitch = 1.1, volume = 0.5 })
+            if w.link_mode then
+                if not w.link_from then
+                    w.link_from = hovered.id
+                    ui.sound("beep", { pitch = 1.3, volume = 0.5 })
+                elseif w.link_from ~= hovered.id then
+                    local existed = markers.are_linked(w.link_from, hovered.id)
+                    markers.link(w.link_from, hovered.id)
+                    ui.sound("lock", { volume = 0.7 })
+                    ui.fx.sparks(pos[hovered.id][1], pos[hovered.id][2], 14, "accent", 90)
+                    ui.print("{accent}↔{} linked {white}" .. markers.label(markers.get(w.link_from)):gsub("{", "{{") ..
+                        "{} ↔ {white}" .. markers.label(hovered):gsub("{", "{{"))
+                    markers.select(hovered.id)
+                    if not love.keyboard.isDown("lshift", "rshift") then w.link_mode, w.link_from = false, nil else w.link_from = hovered.id end
+                end
+            else
+                markers.select(hovered.id)
+                w.mdrag = { id = hovered.id, x = mx, y = my, moved = false }
+                ui.sound("beep", { pitch = 1.1, volume = 0.5 })
+            end
         end
     end
     if hover_map and ui.clicked(r.x, r.y, r.w, r.h) then
         if w.tool then
             place_marker(w, ui, mx, my)
-        else
+        elseif not w.link_mode then
             w.drag = { x = mx, y = my, moved = false }
             w.vx, w.vy = 0, 0
         end
@@ -412,10 +514,14 @@ local function draw_map(w, ui, r)
     end
     local z = ("×%.1f"):format(w.zoom)
     plate(ui, z, r.x + r.w - f:getWidth(z) - 18, r.y + r.h - f:getHeight() - 12, "dim")
+    local hint
     if w.tool then
-        local hint = "click to drop a " .. w.tool .. " marker   ·   shift = keep tool   ·   esc = cancel"
-        plate(ui, hint, r.x + (r.w - f:getWidth(hint)) / 2 - 5, r.y + 8, "accent")
+        hint = "click to drop a " .. w.tool .. " marker   ·   shift = keep tool   ·   esc = cancel"
+    elseif w.link_mode then
+        hint = w.link_from and ("click another marker to link it   ·   shift = keep linking   ·   esc = cancel")
+            or "click a marker to start a link   ·   esc = cancel"
     end
+    if hint then plate(ui, hint, r.x + (r.w - f:getWidth(hint)) / 2 - 5, r.y + 8, "accent") end
 
     if ui.clip then love.graphics.setScissor(unpack(ui.clip)) else love.graphics.setScissor() end
     -- frame + corner ticks
@@ -570,6 +676,96 @@ local function draw_photos(w, ui, m, x, y, pw, ph)
     end
 end
 
+-- a coloured, clickable chip; returns true if its body was clicked and
+-- sets removed=true via the returned second value if its × was clicked
+local function chip(ui, label, x, y, color, removable)
+    local tw = ui.font:getWidth(label) + 14 + (removable and 14 or 0)
+    local hov = ui.hover(x, y, tw, 18)
+    local c = util.color(color)
+    love.graphics.setColor(c[1], c[2], c[3], hov and 0.26 or 0.16)
+    love.graphics.rectangle("fill", x, y, tw, 18, 9, 9)
+    love.graphics.setColor(c[1], c[2], c[3], hov and 1 or 0.8)
+    love.graphics.setLineWidth(1)
+    love.graphics.rectangle("line", x + 0.5, y + 0.5, tw - 1, 17, 9, 9)
+    ui.text(label, x + 8, y + 1, hov and "white" or color)
+    local removed = false
+    if removable then
+        local rx = x + tw - 15
+        local rhov = ui.hover(rx, y, 15, 18)
+        ui.text("×", rx + 2, y + 1, rhov and "err" or "dim")
+        if ui.clicked(rx, y, 15, 18) then removed = true end
+    end
+    local clicked = ui.clicked(x, y, tw - (removable and 15 or 0), 18)
+    return tw, clicked, removed
+end
+
+local function draw_tag_row(ui, m, x, y, ew)
+    ui.text("tag", x, y + 1, "dim")
+    local cx = x + 32
+    for _, t in ipairs(markers.TAGS) do
+        local label = t[1] == "" and "none" or t[2]
+        local active = (m.tag or "") == t[1]
+        local tw = ui.font:getWidth(label) + 14
+        if cx + tw > x + ew then break end
+        local c = util.color(t[3])
+        love.graphics.setColor(c[1], c[2], c[3], active and 0.3 or (ui.hover(cx, y, tw, 18) and 0.14 or 0.05))
+        love.graphics.rectangle("fill", cx, y, tw, 18, 9, 9)
+        if active then
+            love.graphics.setColor(c[1], c[2], c[3], 1); love.graphics.setLineWidth(1)
+            love.graphics.rectangle("line", cx + 0.5, y + 0.5, tw - 1, 17, 9, 9)
+        end
+        ui.text(label, cx + 7, y + 1, active and t[3] or "dim")
+        if ui.clicked(cx, y, tw, 18) then
+            m.tag = t[1] ~= "" and t[1] or nil
+            markers.touch(); ui.sound("tick", { pitch = 1.1, volume = 0.5 })
+        end
+        cx = cx + tw + 5
+    end
+end
+
+-- links + evidence chips
+local function draw_connections(w, ui, m, x, y, ew, ch)
+    if ui.button("wm_link_add", "↔ LINK", x, y, 70, 20, { active = w.link_mode, bold = false, tip = "connect to another marker" }) then
+        w.link_mode = not w.link_mode; w.link_from = w.link_mode and m.id or nil
+        if w.link_mode then ui.sound("beep", { pitch = 1.2 }) else ui.sound("back") end
+    end
+    if ui.button("wm_evid_add", "+ FILE", x + 76, y, 70, 20, { bold = false, tip = "attach a file from the vault as evidence" }) then
+        w.evidence_pick = { marker = m.id, scroll = 0 }
+        ui.sound("beep", { pitch = 1.1 })
+    end
+    ui.text("drop a file on the window to attach it", x + 152, y + 2, "dim")
+
+    -- chips: links first (click to jump), then evidence (click to open)
+    local cx, cy = x, y + 26
+    local rowh = 22
+    local vault = require("src.vault")
+    for _, e in ipairs(markers.links_of(m.id)) do
+        local other = e.other
+        local label = (other.kind == "victim" and "◆ " or "○ ") .. markers.label(other) .. (e.link.label and e.link.label ~= "" and ("  (" .. e.link.label .. ")") or "")
+        local tw, clicked, removed = chip(ui, label, cx, cy, "accent", true)
+        if clicked then markers.select(other.id, true); ui.sound("beep", { pitch = 1.05 }) end
+        if removed then markers.unlink(m.id, other.id); ui.sound("back") end
+        cx = cx + tw + 6
+        if cx > x + ew - 80 then cx = x; cy = cy + rowh end
+        if cy > y + ch - rowh then break end
+    end
+    for _, path in ipairs(markers.evidence_list(m)) do
+        local nm = vault.basename(path)
+        local tw, clicked, removed = chip(ui, "≡ " .. nm, cx, cy, "info", true)
+        if clicked then
+            if vault.kind(path) == "image" then ui.open_viewer({ path }, 1, nm)
+            else ui.run("cat " .. path:gsub("^vault/", "")) end
+        end
+        if removed then markers.remove_evidence(m, path); ui.sound("back") end
+        cx = cx + tw + 6
+        if cx > x + ew - 80 then cx = x; cy = cy + rowh end
+        if cy > y + ch - rowh then break end
+    end
+    if #markers.links_of(m.id) == 0 and #markers.evidence_list(m) == 0 then
+        ui.text("no connections yet", x, cy + 1, "faint")
+    end
+end
+
 local function draw_editor(w, ui, m, x, y, ew, eh)
     local time = ui.time()
     local victim = m.kind == "victim"
@@ -581,9 +777,11 @@ local function draw_editor(w, ui, m, x, y, ew, eh)
     ui.text(tag, x + 7, y + 3, victim and "accent" or "white", ui.font_bold)
     ui.text("#" .. m.id .. "   " .. markers.coords(m.lat, m.lon), x + tw + 10, y + 3, "dim")
 
-    local fy = y + 30
+    draw_tag_row(ui, m, x, y + 24, ew)
+
+    local fy = y + 48
     local col = (ew - 10) / 2
-    local rowh = 46
+    local rowh = 44
     if victim then
         field(ui, m, "name", "name", x, fy, col, rowh - 4)
         field(ui, m, "age", "age", x + col + 10, fy, col, rowh - 4)
@@ -596,12 +794,15 @@ local function draw_editor(w, ui, m, x, y, ew, eh)
         field(ui, m, "name", "name", x, fy, ew, rowh - 4)
         fy = fy + rowh
     end
-    local notes_h = y + eh - fy - 36
-    if notes_h > 40 then
-        local photo_w = math.floor(math.min(180, ew * 0.36))
+    local conn_h = 50
+    local notes_h = y + eh - fy - 36 - conn_h - 6
+    if notes_h > 36 then
+        local photo_w = math.floor(math.min(170, ew * 0.34))
         field(ui, m, "notes", victim and "anything else" or "description", x, fy, ew - photo_w - 10, notes_h, true)
         draw_photos(w, ui, m, x + ew - photo_w, fy, photo_w, notes_h)
+        fy = fy + notes_h + 6
     end
+    draw_connections(w, ui, m, x, fy, ew, conn_h)
 
     -- actions
     local by = y + eh - 26
@@ -645,12 +846,181 @@ local function draw_empty(w, ui, x, y, ew, eh)
         "○ PLACE    drop a location with a description",
         "",
         "click a marker to edit it  ·  drag it to move it",
-        "drop images onto the window to attach photos",
+        "↔ LINK  connect two markers with a labelled line",
+        "tag markers, and attach photos / evidence files",
+        "drop files onto the window: images = photos, else evidence",
         "drag the map to pan  ·  mouse wheel to zoom",
         "",
         ("on file: %d victims, %d places"):format(v, p),
     }
     for i, l in ipairs(lines) do ui.text(l, x, y + 28 + (i - 1) * 18, i <= 2 and "text" or "dim") end
+end
+
+-- modal list of every vault file; click one to attach it as evidence
+local function gather_vault(dir, out, depth)
+    local vault = require("src.vault")
+    for _, it in ipairs(vault.list(dir)) do
+        if it.kind == "folder" then
+            if depth < 4 then gather_vault(it.path, out, depth + 1) end
+        else
+            out[#out + 1] = it
+        end
+    end
+end
+
+draw_evidence_picker = function(w, ui, x, y, width, height)
+    local vault = require("src.vault")
+    local pick = w.evidence_pick
+    local m = markers.get(pick.marker)
+    if not m then w.evidence_pick = nil; return end
+    -- dim the panel
+    ui.set_color("bg", 0.8)
+    love.graphics.rectangle("fill", x - 12, y - 30, width + 24, height + 44)
+    local pw, phh = math.min(width - 20, 420), math.min(height - 20, 360)
+    local px, py = x + (width - pw) / 2, y + (height - phh) / 2
+    ui.set_color("bg2", 0.98); love.graphics.rectangle("fill", px, py, pw, phh, 5, 5)
+    ui.set_color("accent", 0.8); love.graphics.setLineWidth(1)
+    love.graphics.rectangle("line", px + 0.5, py + 0.5, pw - 1, phh - 1, 5, 5)
+    ui.text("ATTACH EVIDENCE  →  " .. markers.label(m), px + 12, py + 10, "white", ui.font_bold)
+    if ui.button("wm_evpick_close", "✕", px + pw - 32, py + 8, 24, 20) then w.evidence_pick = nil; return end
+
+    local all = {}
+    gather_vault(vault.ROOT, all, 1)
+    local already = {}
+    for _, e in ipairs(markers.evidence_list(m)) do already[e] = true end
+
+    local lx, ly = px + 12, py + 38
+    local lw, lh = pw - 24, phh - 50
+    local rh = 22
+    local visible = math.floor(lh / rh)
+    pick.scroll = util.clamp(pick.scroll, 0, math.max(0, #all - visible))
+    if #all == 0 then ui.text("the vault is empty — import files in the FILES panel first", lx, ly + 4, "dim") end
+    local first = math.floor(pick.scroll) + 1
+    for i = first, math.min(#all, first + visible - 1) do
+        local it = all[i]
+        local ry = ly + (i - first) * rh
+        local has = already[it.path]
+        local hov = ui.hover(lx, ry, lw, rh)
+        ui.set_color("accent", (hov and not has) and 0.1 or 0.03)
+        love.graphics.rectangle("fill", lx, ry + 1, lw, rh - 2, 2, 2)
+        local icon = it.kind == "image" and "■" or (it.kind == "text" and "≡" or "□")
+        ui.text(icon, lx + 6, ry + 3, it.kind == "image" and "info" or "dim")
+        ui.text(vault.pretty(it.path):gsub("^vault / ", ""), lx + 22, ry + 3, has and "dim" or "text")
+        ui.text(has and "attached" or vault.size_str(it.size), lx + lw - ui.font:getWidth(has and "attached" or vault.size_str(it.size)) - 2, ry + 3, has and "accent" or "dim")
+        if not has and ui.clicked(lx, ry, lw, rh) then
+            markers.add_evidence(m, it.path)
+            ui.sound("place", { volume = 0.6 })
+            ui.print("{info}≡{} attached {white}" .. vault.basename(it.path):gsub("{", "{{") .. "{} to " .. markers.label(m):gsub("{", "{{"))
+        end
+    end
+    -- block clicks from reaching the map underneath
+    if ui.press and not ui.press.used and not ui.hover(px, py, pw, phh) then w.evidence_pick = nil end
+end
+
+-- horizontal timeline: ticks per marker, a draggable playhead, year labels
+local function year_label(v)
+    return tostring(math.floor(v))
+end
+
+local function draw_timeline(w, ui, x, y, tw, th)
+    local lo, hi = markers.timeline_range()
+    ui.set_color("bg", 0.6)
+    love.graphics.rectangle("fill", x, y, tw, th, 3, 3)
+    ui.set_color("faint", 1); love.graphics.setLineWidth(1)
+    love.graphics.rectangle("line", x + 0.5, y + 0.5, tw - 1, th - 1, 3, 3)
+    ui.text("TIMELINE", x + 8, y + 4, "dim", ui.font)
+    if not lo then
+        ui.text("no dated markers — add dates to victims to see them here", x + 80, y + 4, "faint")
+        return
+    end
+    if hi - lo < 0.01 then hi = lo + 1 end
+    local pad = 14
+    local ax, aw = x + pad, tw - pad * 2
+    local ay = y + th - 18
+    w.playhead = w.playhead or 1
+    w.playhead_date = lo + (hi - lo) * w.playhead
+
+    -- axis
+    ui.set_color("dim", 1)
+    love.graphics.setLineWidth(1)
+    love.graphics.line(ax, ay, ax + aw, ay)
+    -- year gridlines
+    local span = hi - lo
+    local step = span > 60 and 20 or (span > 20 and 10 or (span > 8 and 5 or 1))
+    for yr = math.ceil(lo / step) * step, hi, step do
+        local px = ax + (yr - lo) / span * aw
+        ui.set_color("faint", 1)
+        love.graphics.line(px, y + 18, px, ay)
+        ui.text(year_label(yr), px - ui.font:getWidth(year_label(yr)) / 2, ay + 2, "dim")
+    end
+
+    -- shade the "future" (right of the playhead)
+    local hx = ax + w.playhead * aw
+    ui.set_color("bg", 0.5)
+    love.graphics.rectangle("fill", hx, y + 17, ax + aw - hx, ay - y - 17)
+
+    -- ticks
+    local hovered_tick
+    for _, m in ipairs(markers.list) do
+        local d = markers.event_date(m)
+        if d then
+            local px = ax + (d - lo) / span * aw
+            local future = d > w.playhead_date + 1e-6
+            local c = marker_color(m)
+            local sel = markers.selected == m.id
+            local tickh = sel and 12 or 8
+            love.graphics.setColor(c[1], c[2], c[3], future and 0.3 or 1)
+            love.graphics.setLineWidth(sel and 2 or 1)
+            love.graphics.line(px, ay - tickh, px, ay)
+            if m.kind == "victim" then
+                love.graphics.polygon("fill", px, ay - tickh - 5, px + 3, ay - tickh, px - 3, ay - tickh)
+            else
+                love.graphics.circle(future and "line" or "fill", px, ay - tickh - 3, 2.5)
+            end
+            if ui.hover(px - 5, y + 16, 10, th - 20) then hovered_tick = { m = m, px = px } end
+        end
+    end
+    if hovered_tick then
+        local m = hovered_tick.m
+        local _, src = markers.event_date(m)
+        ui.tooltip(markers.label(m) .. "  ·  " .. (src or "?"))
+        if ui.clicked(hovered_tick.px - 5, y + 16, 10, th - 20) then markers.select(m.id, true) end
+    end
+
+    -- playhead
+    local c = util.palette.accent
+    love.graphics.setColor(c[1], c[2], c[3], 1)
+    love.graphics.setLineWidth(1.5)
+    love.graphics.line(hx, y + 16, hx, ay + 2)
+    love.graphics.polygon("fill", hx, y + 16, hx - 5, y + 10, hx + 5, y + 10)
+    -- current date readout
+    local lbl = ("%.0f"):format(w.playhead_date)
+    local showing = 0
+    for _, m in ipairs(markers.list) do
+        local d = markers.event_date(m)
+        if not d or d <= w.playhead_date + 1e-6 then showing = showing + 1 end
+    end
+    local info = lbl .. "   " .. showing .. "/" .. #markers.list
+    local iw = ui.font:getWidth(info) + 10
+    local ix = util.clamp(hx - iw / 2, x + 2, x + tw - iw - 2)
+    ui.set_color("bg", 0.9); love.graphics.rectangle("fill", ix, y + 2, iw, 14, 2, 2)
+    ui.text(info, ix + 5, y + 3, "accent")
+
+    -- drag the playhead (grab anywhere on the top half of the strip)
+    if ui.clicked(x, y, tw, 20) or (w.ph_drag and ui.mouse.down) then
+        w.ph_drag = true
+    end
+    if w.ph_drag then
+        if ui.mouse.down then
+            w.playhead = util.clamp((ui.mouse.x - ax) / aw, 0, 1)
+        else
+            w.ph_drag = nil
+        end
+    end
+    -- buttons: step to each event / show all
+    if ui.button("wm_tl_all", "ALL", x + tw - 52, y + 2, 44, 15, { bold = false, active = w.playhead >= 0.999 }) then
+        w.playhead = 1
+    end
 end
 
 function W.draw(w, ui, x, y, width, height)
@@ -661,6 +1031,16 @@ function W.draw(w, ui, x, y, width, height)
     end
     if ui.button("wm_tool_place", "○ PLACE", x + 116, y, 100, bh, { active = w.tool == "place", tip = "drop a place marker" }) then
         w.tool = w.tool ~= "place" and "place" or nil
+    end
+    if ui.button("wm_tool_link", "↔ LINK", x + 222, y, 90, bh, { active = w.link_mode, tip = "connect two markers" }) then
+        w.link_mode = not w.link_mode
+        w.link_from = nil
+        w.tool = nil
+        if w.link_mode then ui.sound("beep", { pitch = 1.2 }) else ui.sound("back") end
+    end
+    if ui.button("wm_tool_timeline", "⊙ TIME", x + 318, y, 86, bh, { active = w.timeline, tip = "reveal markers over time" }) then
+        w.timeline = not w.timeline
+        ui.sound(w.timeline and "beep" or "back", { pitch = 1.1 })
     end
     local zx = x + width - 3 * 34 - 52
     if ui.button("wm_zoom_out", "−", zx, y, 30, bh) then
@@ -674,16 +1054,31 @@ function W.draw(w, ui, x, y, width, height)
         ui.sound("whoosh", { volume = 0.4 })
     end
 
+    -- pre-compute the playhead date so the map can dim future markers this frame
+    if w.timeline then
+        local lo, hi = markers.timeline_range()
+        if lo then
+            if hi - lo < 0.01 then hi = lo + 1 end
+            w.playhead = w.playhead or 1
+            w.playhead_date = lo + (hi - lo) * w.playhead
+        end
+    end
+
     -- map keeps the world's proportions; the rest goes to the list + editor
+    local tlh = w.timeline and 58 or 0
     local my = y + bh + 10
-    local details_min = 250
-    local mh = math.floor(math.min(width / ASPECT, height - bh - 10 - details_min - 12))
+    local details_min = markers.selected and 326 or 250
+    local mh = math.floor(math.min(width / ASPECT, height - bh - 10 - details_min - 12 - tlh))
     mh = math.max(120, mh)
     local mw = math.floor(math.min(width, mh * ASPECT))
     w.rect = { x = x + (width - mw) / 2, y = my, w = mw, h = mh }
     draw_map(w, ui, w.rect)
 
-    local dy = my + mh + 14
+    local dy = my + mh + 12
+    if w.timeline then
+        draw_timeline(w, ui, x, dy, width, 50)
+        dy = dy + 58
+    end
     local dh = y + height - dy
     if dh < 60 then return end
     local lw = math.floor(width * 0.34)
@@ -693,6 +1088,8 @@ function W.draw(w, ui, x, y, width, height)
     local ex, ew = x + lw + 26, width - lw - 26
     local m = markers.selected and markers.get(markers.selected)
     if m then draw_editor(w, ui, m, ex, dy, ew, dh) else draw_empty(w, ui, ex, dy, ew, dh) end
+
+    if w.evidence_pick then draw_evidence_picker(w, ui, x, y, width, height) end
 end
 
 return W
