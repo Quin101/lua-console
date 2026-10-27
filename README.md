@@ -10,6 +10,10 @@ Everything is fake theatre. Nothing touches your real network.
 **Windows:** unzip `dist/QrawllerTerminal-win64.zip` and double-click `QrawllerTerminal.exe`
 (keep the `.dll` files next to it). Every push also builds a fresh copy under the repo's **Actions** tab.
 
+**Mac:** unzip `dist/QrawllerTerminal-macos.zip` and open `QrawllerTerminal.app`. The first time,
+macOS will block it because it isn't signed: go to **System Settings → Privacy & Security** and click
+**Open Anyway** (on older macOS you can instead right-click the app → **Open**).
+
 **From source (any OS):** install LÖVE 11.5 and run `love .` in this folder.
 
 ## Controls
