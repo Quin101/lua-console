@@ -299,10 +299,12 @@ function ui.textfield(id, value, x, y, w, h, opts)
         caret_x = px + font:getWidth(bl[#bl] or "")
         caret_y = py + (caret_line - 1 - scroll) * lh
     else
-        local before = focused and util.usub(value, 1, f.caret) or value
+        local shown = opts.mask and string.rep("•", util.ulen(value)) or value
+        local before = shown
+        if focused then before = opts.mask and string.rep("•", f.caret) or util.usub(value, 1, f.caret) end
         local offset = focused and math.max(0, font:getWidth(before) - inner + 4) or 0
         love.graphics.setScissor(x + 2, y, w - 4, h)
-        love.graphics.print(value, px - offset, py)
+        love.graphics.print(shown, px - offset, py)
         love.graphics.setScissor()
         caret_x = px - offset + font:getWidth(before)
     end

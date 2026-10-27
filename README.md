@@ -25,6 +25,8 @@ The hacking commands are fake theatre. Nothing touches your real network.
 - **Case board** (the BOARD tab): a standalone corkboard, separate from the map. Press **+ CARD**
   to pin a note (title + text), colour it, drop a photo on it, and **↔ LINK** cards with red string.
   Drag cards to arrange, drag the background to pan, wheel to zoom. Saved to its own file.
+- **Email** (the MAIL tab): a compose window for the email sender below — set up your
+  account, type recipients (comma-separated), subject and message, and press SEND.
 - **Password forge** (the KEYS tab): generate strong passwords (length, character sets, avoid
   look-alikes), copy them, and rate the strength of any password you type — entropy, character
   mix and estimated crack time, all computed locally.

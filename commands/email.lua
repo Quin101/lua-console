@@ -144,6 +144,7 @@ return {
                 t.print("  {accent}email test{}            {dim}send yourself a test")
                 t.print("  {accent}email config{}          {dim}show settings (password hidden)")
                 t.print("")
+                t.print("{dim}or use the {}MAIL{dim} tab (a compose window).")
                 t.print("{dim}uses {}curl{dim} + SMTP.  for Gmail/Yahoo/iCloud use an app password.")
                 t.print("{dim}curl on this machine: " .. (email.curl_ok() and "{accent}available" or "{err}not found"))
             else
