@@ -6,6 +6,7 @@
 local world = require("src.world")
 local markers = require("src.markers")
 local util = require("src.util")
+local images = require("src.images")
 
 local ASPECT = 360 / (world.LAT_MAX - world.LAT_MIN)
 
@@ -130,6 +131,7 @@ end
 
 local W = {
     title = "WORLD MAP",
+    tab = "MAP",
     order = 1,
     height = "fill",
     width = 0.6,
@@ -179,6 +181,30 @@ function W.keypressed(w, ui, key)
         if markers.selected then markers.selected = nil; return true end
     end
     return false
+end
+
+-- dropping an image onto the window attaches it to the selected marker
+function W.filedropped(w, ui, file)
+    local m = markers.selected and markers.get(markers.selected)
+    if not m or ui.active_tab ~= W.tab then return false end
+    local name = file:getFilename():match("([^/\\]+)$") or "photo.png"
+    if not images.is_image_name(name) then return false end
+    file:open("r")
+    local data = file:read()
+    file:close()
+    local path, err = markers.add_photo(m, name, data)
+    if path then
+        w.photo_i = w.photo_i or {}
+        w.photo_i[m.id] = #markers.photo_list(m)
+        w.drop_flash = ui.time()
+        ui.sound("place")
+        ui.fx.flash("accent", 0.12)
+        ui.print("{accent}◆{} photo attached to {white}" .. markers.label(m):gsub("{", "{{") .. "{}  {dim}" .. name:gsub("{", "{{"))
+    else
+        ui.sound("err")
+        ui.print("{err}✗{} " .. name:gsub("{", "{{") .. ": " .. err)
+    end
+    return true
 end
 
 function W.wheelmoved(w, ui, dx, dy)
@@ -295,7 +321,21 @@ local function draw_map(w, ui, r)
                 ui.set_color("white", 1 - p[3])
                 love.graphics.circle("line", p[1], p[2] + (1 - bounce(p[3])) * 46, 4 + p[3] * 40)
             end
-            if selected then brackets(p[1], p[2], 15, time) end
+            if selected then
+                brackets(p[1], p[2], 15, time)
+                local ph = markers.photo_list(m)
+                local img = ph[1] and images.get(ph[#ph])
+                if img then
+                    local tx = p[1] - 64
+                    if tx < r.x + 4 then tx = p[1] + 20 end
+                    local ty = p[2] - 24
+                    ui.set_color("bg", 0.9)
+                    love.graphics.rectangle("fill", tx - 2, ty - 2, 48, 48)
+                    images.draw_fit(img, tx, ty, 44, 44, true)
+                    ui.set_color("accent", 0.9)
+                    love.graphics.rectangle("line", tx - 2.5, ty - 2.5, 49, 49)
+                end
+            end
             if w.zoom > 1.6 or hov or selected then
                 local label = markers.label(m)
                 local font = selected and ui.font_bold or ui.font
@@ -462,6 +502,74 @@ local function field(ui, m, key, label, x, y, w, h, multiline)
     end
 end
 
+-- photo box: shows the current photo, arrows to flip through, × to remove, click to enlarge
+local function draw_photos(w, ui, m, x, y, pw, ph)
+    local list = markers.photo_list(m)
+    local hov = ui.hover(x, y, pw, ph)
+    ui.text("photos" .. (#list > 0 and ("  " .. #list) or ""), x, y, "dim")
+    y, ph = y + ui.font:getHeight() + 3, ph - ui.font:getHeight() - 3
+    ui.set_color("bg", 0.7)
+    love.graphics.rectangle("fill", x, y, pw, ph, 3, 3)
+    local drop_glow = ui.ease("wm_drop_" .. m.id, (w.drop_flash and ui.time() - w.drop_flash < 0.6) and 1 or 0, 8)
+    if #list == 0 then
+        -- dashed outline + hint
+        ui.set_color(hov and "accent" or "faint", 1)
+        local dash = 6
+        for i = 0, math.floor((pw + ph) * 2 / (dash * 2)) do
+            local d = i * dash * 2 + (ui.time() * 12) % (dash * 2)
+            local function pt(t)
+                if t < pw then return x + t, y end
+                t = t - pw; if t < ph then return x + pw, y + t end
+                t = t - ph; if t < pw then return x + pw - t, y + ph end
+                t = t - pw; return x, y + ph - math.min(t, ph)
+            end
+            local x1, y1 = pt(d % ((pw + ph) * 2))
+            local x2, y2 = pt((d + dash) % ((pw + ph) * 2))
+            if math.abs(x1 - x2) + math.abs(y1 - y2) <= dash + 0.5 then love.graphics.line(x1, y1, x2, y2) end
+        end
+        local lines = { "drag an image", "onto the window", "to attach it" }
+        for i, l in ipairs(lines) do
+            ui.text_center(l, x, y + ph / 2 - 26 + (i - 1) * 17, pw, hov and "text" or "dim")
+        end
+        return
+    end
+    w.photo_i = w.photo_i or {}
+    local idx = util.clamp(w.photo_i[m.id] or #list, 1, #list)
+    w.photo_i[m.id] = idx
+    local img = images.get(list[idx])
+    if img then images.draw_fit(img, x + 2, y + 2, pw - 4, ph - 4, true) end
+    ui.set_color(hov and "accent" or "faint", 1)
+    love.graphics.setLineWidth(1)
+    love.graphics.rectangle("line", x + 0.5, y + 0.5, pw - 1, ph - 1, 3, 3)
+    if drop_glow > 0.01 then
+        ui.set_color("white", drop_glow * 0.5)
+        love.graphics.rectangle("line", x - 2, y - 2, pw + 4, ph + 4, 4, 4)
+    end
+    if hov then
+        -- controls appear on hover
+        if #list > 1 then
+            if ui.button("wm_ph_prev", "‹", x + 4, y + ph / 2 - 12, 22, 24) then w.photo_i[m.id] = (idx - 2) % #list + 1 end
+            if ui.button("wm_ph_next", "›", x + pw - 26, y + ph / 2 - 12, 22, 24) then w.photo_i[m.id] = idx % #list + 1 end
+        end
+        local confirming = w.confirm_photo == list[idx] and ui.time() - (w.confirm_photo_at or 0) < 3
+        if ui.button("wm_ph_del", confirming and "sure?" or "×", x + pw - (confirming and 58 or 26), y + 4,
+            confirming and 54 or 22, 22, { active = confirming, tip = "remove this photo" }) then
+            if confirming then
+                markers.remove_photo(m, list[idx])
+                w.confirm_photo = nil
+                ui.sound("back")
+            else
+                w.confirm_photo, w.confirm_photo_at = list[idx], ui.time()
+            end
+        end
+        ui.text(idx .. "/" .. #list, x + 6, y + ph - 20, "white")
+        if ui.clicked(x, y, pw, ph) then
+            ui.open_viewer(list, idx, markers.label(m))
+        end
+        ui.tooltip("click to enlarge  ·  drop more images to add")
+    end
+end
+
 local function draw_editor(w, ui, m, x, y, ew, eh)
     local time = ui.time()
     local victim = m.kind == "victim"
@@ -490,7 +598,9 @@ local function draw_editor(w, ui, m, x, y, ew, eh)
     end
     local notes_h = y + eh - fy - 36
     if notes_h > 40 then
-        field(ui, m, "notes", victim and "anything else" or "description", x, fy, ew, notes_h, true)
+        local photo_w = math.floor(math.min(180, ew * 0.36))
+        field(ui, m, "notes", victim and "anything else" or "description", x, fy, ew - photo_w - 10, notes_h, true)
+        draw_photos(w, ui, m, x + ew - photo_w, fy, photo_w, notes_h)
     end
 
     -- actions
@@ -535,6 +645,7 @@ local function draw_empty(w, ui, x, y, ew, eh)
         "○ PLACE    drop a location with a description",
         "",
         "click a marker to edit it  ·  drag it to move it",
+        "drop images onto the window to attach photos",
         "drag the map to pan  ·  mouse wheel to zoom",
         "",
         ("on file: %d victims, %d places"):format(v, p),

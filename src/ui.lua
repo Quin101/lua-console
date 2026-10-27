@@ -6,6 +6,9 @@
 local util = require("src.util")
 local fx = require("src.fx")
 local sound = require("src.sound")
+local images = require("src.images")
+
+local viewer_step, draw_viewer -- defined further down
 
 local ui = {
     widgets = {},
@@ -210,6 +213,7 @@ function ui.textfield(id, value, x, y, w, h, opts)
         f.caret = util.clamp(f.caret or #chars, 0, #chars)
         for _, op in ipairs(f.ops) do
             if op[1] == "text" then
+                if f.select_all then chars = {}; f.caret = 0; f.select_all = nil end
                 for _, ch in ipairs(util.chars(op[2])) do
                     if ch ~= "\n" or opts.multiline then
                         f.caret = f.caret + 1
@@ -217,6 +221,8 @@ function ui.textfield(id, value, x, y, w, h, opts)
                     end
                 end
                 f.typed = ui.time()
+            elseif op[1] == "back" and f.select_all then
+                chars = {}; f.caret = 0; f.select_all = nil
             elseif op[1] == "back" and f.caret > 0 then
                 table.remove(chars, f.caret)
                 f.caret = f.caret - 1
@@ -300,6 +306,10 @@ function ui.textfield(id, value, x, y, w, h, opts)
         love.graphics.setScissor()
         caret_x = px - offset + font:getWidth(before)
     end
+    if focused and f.select_all and value ~= "" then
+        ui.set_color("accent", 0.22)
+        love.graphics.rectangle("fill", px - 2, py - 1, math.min(inner + 4, font:getWidth(value) + 4), font:getHeight() + 2)
+    end
     if focused then
         local idle = ui.time() - (f.typed or 0)
         local a = idle < 0.5 and 1 or (0.5 + 0.5 * math.cos((idle - 0.5) * 5))
@@ -309,6 +319,12 @@ function ui.textfield(id, value, x, y, w, h, opts)
     end
     if ui.clip then love.graphics.setScissor(unpack(ui.clip)) end
     return value
+end
+
+function ui.focus_field_all(id)
+    ui.focus_field(id)
+    ui.focus.select_all = true
+    ui.focus.caret = math.huge
 end
 
 function ui.focus_field(id)
@@ -324,6 +340,7 @@ end
 -- keyboard routing (called from main) -------------------------------------------
 
 function ui.textinput(t)
+    if ui.viewer then return true end
     if not ui.focus then return false end
     table.insert(ui.focus.ops, { "text", t })
     sound.play("key", { pitch = 0.95 + math.random() * 0.2, volume = 0.8 })
@@ -332,6 +349,12 @@ function ui.textinput(t)
 end
 
 function ui.keypressed(key)
+    if ui.viewer then
+        if key == "left" then viewer_step(-1)
+        elseif key == "right" then viewer_step(1)
+        elseif key == "escape" or key == "return" or key == "space" then ui.close_viewer() end
+        return true
+    end
     local f = ui.focus
     if f then
         local ctrl = love.keyboard.isDown("lctrl", "rctrl", "lgui", "rgui")
@@ -415,6 +438,66 @@ local function draw_panel(x, y, w, h, title, appear, extra)
     end
 end
 
+-- widgets with a `tab` label share one panel; only the active tab is shown
+local function visible(wdg)
+    return not wdg.tab or wdg.tab == ui.active_tab
+end
+
+function ui.tabs()
+    local out = {}
+    for _, w in ipairs(ui.widgets) do
+        if w.tab then out[#out + 1] = w end
+    end
+    if #out > 0 then
+        local ok = false
+        for _, w in ipairs(out) do if w.tab == ui.active_tab then ok = true end end
+        if not ok then ui.active_tab = out[1].tab end
+    end
+    return out
+end
+
+-- switch the tabbed panel, e.g. ui.show_tab("FILES")
+function ui.show_tab(label)
+    for _, w in ipairs(ui.widgets) do
+        if w.tab and w.tab:lower() == label:lower() then
+            if ui.active_tab ~= w.tab then
+                ui.active_tab = w.tab
+                ui.unfocus()
+                sound.play("whoosh", { volume = 0.35 })
+                w.tab_born = ui.time()
+            end
+            ui.show_panels = true
+            return true
+        end
+    end
+    return false
+end
+
+-- clickable tab labels in a panel's title bar
+function ui.draw_tabs(x, y, appear)
+    local tx = x + 12
+    local f = ui.font_bold
+    for _, w in ipairs(ui.tabs()) do
+        local label = w.tab
+        local tw = f:getWidth(label) + 18
+        local active = w.tab == ui.active_tab
+        local hov = ui.hover(tx, y, tw, TITLE_H)
+        local a = ui.ease("tab_" .. label, active and 1 or (hov and 0.5 or 0), 14)
+        if active then
+            ui.set_color("accent", appear)
+            love.graphics.rectangle("fill", tx, y + TITLE_H / 2 - 2, 4, 4)
+        end
+        local c = util.mix(util.palette.dim, util.palette.white, a)
+        love.graphics.setFont(f)
+        love.graphics.setColor(c[1], c[2], c[3], appear)
+        love.graphics.print(label, tx + 10, y + (TITLE_H - f:getHeight()) / 2 + 1)
+        ui.set_color("accent", a * appear)
+        love.graphics.rectangle("fill", tx + 10, y + TITLE_H - 2, (tw - 18) * a, 2)
+        if ui.clicked(tx, y, tw, TITLE_H) and not active then ui.show_tab(label) end
+        tx = tx + tw + 8
+    end
+end
+
 -- works out where the terminal and every widget go
 function ui.layout()
     local W, H = love.graphics.getDimensions()
@@ -439,16 +522,21 @@ function ui.layout()
     ui.rects = {}
     if not panels then return end
     local px = tx + tw + GAP
-    local fixed, fills = 0, 0
+    ui.tabs()
+    local fixed, fills, count = 0, 0, 0
     for _, wdg in ipairs(ui.widgets) do
+        if not visible(wdg) then goto continue end
+        count = count + 1
         local full = (wdg.height == "fill") and 0 or (wdg.height or 160)
         local hh = TITLE_H + (1 - wdg.collapse) * (full + 8)
         if wdg.height == "fill" and wdg.collapse < 1 then fills = fills + 1 end
         fixed = fixed + (wdg.height == "fill" and TITLE_H or hh)
+        ::continue::
     end
-    local free = math.max(0, th - fixed - GAP * (#ui.widgets - 1))
+    local free = math.max(0, th - fixed - GAP * (count - 1))
     local y = ty
     for i, wdg in ipairs(ui.widgets) do
+        if not visible(wdg) then goto skip end
         local hh
         if wdg.height == "fill" then
             hh = TITLE_H + (fills > 0 and (1 - wdg.collapse) * free / fills or 0)
@@ -457,6 +545,7 @@ function ui.layout()
         end
         ui.rects[i] = { px, y, pw, hh }
         y = y + hh + GAP
+        ::skip::
     end
 end
 
@@ -480,6 +569,9 @@ end
 function ui.draw()
     local now = ui.time()
     ui.tooltip_text = nil
+    if ui.viewer and ui.press then
+        ui.viewer_press, ui.press = ui.press, nil
+    end
     ui.last_field_order = ui.field_order
     ui.field_order = {}
     local r = ui.term_rect
@@ -504,7 +596,12 @@ function ui.draw()
                 sound.play("tick", { pitch = w.collapsed and 0.8 or 1.3 })
             end
             local extra = w.status and w.status(w, ui) or (w.collapsed and "+" or nil)
-            draw_panel(x, y, pw, ph, (w.title or w.file) .. (title_hover and "  ·" or ""), appear, extra)
+            if w.tab then
+                draw_panel(x, y, pw, ph, nil, appear, extra)
+                ui.draw_tabs(x, y, appear)
+            else
+                draw_panel(x, y, pw, ph, (w.title or w.file) .. (title_hover and "  ·" or ""), appear, extra)
+            end
             if w.collapse < 0.98 then
                 local cx, cy, cw, ch = x + 12, y + TITLE_H + 10, pw - 24, ph - TITLE_H - 18
                 ui.clip = { x, y + TITLE_H + 1, pw, math.max(0, ph - TITLE_H - 2) }
@@ -522,6 +619,91 @@ function ui.draw()
     end
 
     love.graphics.setFont(ui.T.font)
+end
+
+-- full-screen image viewer --------------------------------------------------------
+
+-- ui.open_viewer({ "photos/a.png", "vault/b.jpg" }, 1, "caption")
+function ui.open_viewer(paths, index, caption)
+    if #paths == 0 then return end
+    ui.viewer = { paths = paths, index = index or 1, caption = caption, born = ui.time() }
+    ui.unfocus()
+    sound.play("whoosh", { volume = 0.5 })
+end
+
+function ui.close_viewer()
+    if ui.viewer then sound.play("back") end
+    ui.viewer = nil
+end
+
+viewer_step = function(d)
+    local v = ui.viewer
+    v.index = (v.index - 1 + d) % #v.paths + 1
+    v.switched = ui.time()
+    sound.play("tick", { pitch = d > 0 and 1.2 or 0.9 })
+end
+
+draw_viewer = function()
+    local v = ui.viewer
+    local W, H = love.graphics.getDimensions()
+    local a = util.ease_out(util.clamp((ui.time() - v.born) / 0.25, 0, 1))
+    ui.set_color("bg", 0.94 * a)
+    love.graphics.rectangle("fill", 0, 0, W, H)
+    local path = v.paths[v.index]
+    local img = images.get(path)
+    local bw, bh = W * 0.86, H * 0.76
+    local s = 0.94 + 0.06 * a
+    local bx, by = (W - bw * s) / 2, (H - bh * s) / 2 - 10
+    if img then
+        local k = util.ease_out(util.clamp((ui.time() - (v.switched or v.born)) / 0.25, 0, 1))
+        local x, y, dw, dh = images.draw_fit(img, bx, by, bw * s, bh * s, false, a * k)
+        ui.set_color("accent", 0.6 * a)
+        love.graphics.setLineWidth(1)
+        love.graphics.rectangle("line", x - 0.5, y - 0.5, dw + 1, dh + 1)
+        local iw, ih = img:getDimensions()
+        local info = (v.caption and (v.caption .. "   ·   ") or "") .. iw .. "×" .. ih
+        ui.text_center(info, 0, y + dh + 14, W, "text", ui.font, a)
+    else
+        ui.text_center("could not load " .. path, 0, H / 2, W, "err", ui.font, a)
+    end
+    local nav = (#v.paths > 1 and ("‹  " .. v.index .. " / " .. #v.paths .. "  ›     ") or "") .. "esc or click to close"
+    ui.text_center(nav, 0, H - 40, W, "dim", ui.font, a)
+    local p = ui.viewer_press
+    ui.viewer_press = nil
+    if p then
+        if #v.paths > 1 and p.x < W * 0.2 then viewer_step(-1)
+        elseif #v.paths > 1 and p.x > W * 0.8 then viewer_step(1)
+        else ui.close_viewer() end
+    end
+end
+
+-- drag & drop ---------------------------------------------------------------------
+
+-- offers a dropped file to widgets: the one under the mouse first, then the rest
+function ui.filedropped(file)
+    local order = {}
+    for i, w in ipairs(ui.widgets) do
+        local r = ui.rects[i]
+        if r and ui.hover(r[1], r[2], r[3], r[4]) then table.insert(order, 1, w) else order[#order + 1] = w end
+    end
+    for _, w in ipairs(order) do
+        if w.filedropped then
+            local ok, used = pcall(w.filedropped, w, ui, file)
+            if not ok then ui.T.add("drop failed: " .. tostring(used), "err", { raw = true })
+            elseif used then return true end
+        end
+    end
+    return false
+end
+
+function ui.directorydropped(path)
+    for _, w in ipairs(ui.widgets) do
+        if w.directorydropped then
+            local ok, used = pcall(w.directorydropped, w, ui, path)
+            if ok and used then return true end
+        end
+    end
+    return false
 end
 
 -- drawn after the terminal text so tooltips sit on top
@@ -554,6 +736,7 @@ function ui.draw_overlay()
         love.graphics.rectangle("line", tx + 0.5, ty + 0.5, tw - 1, th - 1, 4, 4)
         ui.text(ui.tooltip_text, tx + 8, ty + 5, "white")
     end
+    if ui.viewer then draw_viewer() end
     ui.press = nil
     love.graphics.setFont(ui.T.font)
 end

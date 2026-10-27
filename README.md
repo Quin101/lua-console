@@ -17,7 +17,13 @@ The hacking commands are fake theatre. Nothing touches your real network.
     (Tab jumps to the next field). Drag a marker to move it. Use the list to search and filter.
   - Markers save automatically to `markers.lua` in the save folder
     (`%APPDATA%\qrawller\` on Windows, `~/Library/Application Support/qrawller/` on Mac).
-- **Terminal**: `help` lists everything. Map commands: `markers`, `locate <name>`, `dossier <name>`.
+  - **Photos**: drag image files onto the window to attach them to the selected marker. They show
+    in the editor, as a thumbnail on the map, and full-screen when clicked.
+- **Files panel** (the FILES tab, or `files` / F3): a real file vault stored under the save folder.
+  Make folders and text documents, import images and any other files by dragging them onto the window,
+  edit text in place, preview images (list or grid view), rename, delete, and open the folder on disk.
+- **Terminal**: `help` lists everything. Map: `markers`, `locate <name>`, `dossier <name>`.
+  Files: `ls`, `cat <file>`, `mkdir <name>`, `write <file> <text>`, `files`.
 - **Sound**: dark synthesized sounds (sub-bass hits, distortion, reverb) and a low ambient drone.
   Turn them off with `sound off`, or set `ambient = false` in `config.lua`.
 
@@ -41,8 +47,9 @@ macOS will block it because it isn't signed: go to **System Settings → Privacy
 | `ctrl+c` | stop the running command |
 | `ctrl+l` | clear |
 | `pgup` `pgdn` / mouse wheel | scroll |
-| `F2` | show/hide the world map |
-| `esc` | cancel marker placement / deselect |
+| `F2` | show/hide the side panel |
+| `F3` | switch tab (MAP / FILES) |
+| `esc` | cancel placement / close viewer or editor |
 | `F11` | fullscreen |
 | click a panel title | collapse it |
 
@@ -113,10 +120,12 @@ src/fx.lua          glow, ripples, sparks, glitch, matrix rain
 src/sound.lua       sounds generated in code (no audio files)
 src/intro.lua       the start-up animation
 src/world.lua       land data -> map dots and globe points
-src/markers.lua     marker storage (shared by the map and commands)
+src/markers.lua     marker storage + photos (shared by the map and commands)
+src/vault.lua       the file vault (folders, documents, imported files)
+src/images.lua      image loading/caching + full-screen viewer helpers
 assets/worldmask.lua  0.5° land mask (from global-land-mask, MIT; NOAA GLOBE data, public domain)
 commands/           terminal commands, one file each
-widgets/            dashboard panels, one file each
+widgets/            panels: worldmap.lua (MAP tab), files.lua (FILES tab)
 tools/              build scripts
 ```
 
@@ -124,7 +133,6 @@ tools/              build scripts
 
 **Panels**
 - **Links between markers**: draw glowing connection lines between victims and places ("seen at", "lives at").
-- **Photo slot** on victim markers (drag an image file onto the window).
 - **Timeline**: a scrubber under the map that shows markers by their dates.
 - **File browser**: browse a fake file system of a hacked machine. Double-click files to "decrypt" them.
 - **Password cracker**: pick a hash, choose wordlist/brute-force, and watch guesses scroll by with a live attempts/sec graph.

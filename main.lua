@@ -158,6 +158,14 @@ function love.keypressed(key)
         ui.show_panels = not ui.show_panels
         return
     end
+    if key == "f3" and not ui.focus then
+        -- cycle the tabbed panel (MAP / FILES)
+        local tabs = ui.tabs()
+        for i, w in ipairs(tabs) do
+            if w.tab == ui.active_tab then ui.show_tab(tabs[i % #tabs + 1].tab); break end
+        end
+        return
+    end
     if ui.keypressed(key) then return end
     T.keypressed(key)
 end
@@ -176,9 +184,20 @@ end
 
 function love.quit()
     if markers.dirty_at then markers.save() end
+    require("src.vault").flush(true)
 end
 
 function love.resize()
     T.resize()
     ui.layout()
+end
+
+function love.filedropped(file)
+    if intro.active then return end
+    ui.filedropped(file)
+end
+
+function love.directorydropped(path)
+    if intro.active then return end
+    ui.directorydropped(path)
 end

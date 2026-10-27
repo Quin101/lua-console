@@ -11,7 +11,10 @@ markers.VICTIM_FIELDS = {
 }
 markers.PLACE_FIELDS = { { "name", "name" }, { "notes", "description" } }
 
-local KEYS = { "id", "kind", "lat", "lon", "created", "name", "age", "dob", "dod", "ip", "address", "notes" }
+local KEYS = { "id", "kind", "lat", "lon", "created", "name", "age", "dob", "dod", "ip", "address", "notes", "photos" }
+local images = require("src.images")
+
+markers.PHOTO_DIR = "photos"
 
 function markers.load()
     markers.list = {}
@@ -70,9 +73,55 @@ function markers.add(kind, lat, lon)
     return m
 end
 
+-- photos ---------------------------------------------------------------------
+-- stored as files in photos/, listed on the marker as "path|path|..."
+
+function markers.photo_list(m)
+    local out = {}
+    for p in tostring(m.photos or ""):gmatch("[^|]+") do
+        if love.filesystem.getInfo(p) then out[#out + 1] = p end
+    end
+    return out
+end
+
+local function set_photos(m, list)
+    m.photos = #list > 0 and table.concat(list, "|") or nil
+    markers.save()
+end
+
+-- returns the stored path, or nil + reason
+function markers.add_photo(m, name, data)
+    if not images.valid(name, data) then return nil, "not a supported image (png, jpg, bmp, tga)" end
+    love.filesystem.createDirectory(markers.PHOTO_DIR)
+    local ext = (name:match("%.([%w]+)$") or "png"):lower()
+    local path = ("%s/m%d_%d_%d.%s"):format(markers.PHOTO_DIR, m.id, os.time(), math.random(1000, 9999), ext)
+    love.filesystem.write(path, data)
+    local list = markers.photo_list(m)
+    list[#list + 1] = path
+    set_photos(m, list)
+    return path
+end
+
+function markers.remove_photo(m, path)
+    local list = markers.photo_list(m)
+    for i, p in ipairs(list) do
+        if p == path then
+            table.remove(list, i)
+            love.filesystem.remove(p)
+            images.forget(p)
+            break
+        end
+    end
+    set_photos(m, list)
+end
+
 function markers.remove(id)
     for i, m in ipairs(markers.list) do
         if m.id == id then
+            for _, p in ipairs(markers.photo_list(m)) do
+                love.filesystem.remove(p)
+                images.forget(p)
+            end
             table.remove(markers.list, i)
             if markers.selected == id then markers.selected = nil end
             markers.save()
