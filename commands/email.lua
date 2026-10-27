@@ -31,7 +31,7 @@ local function do_setup(t)
     if c.from == "" then return t.print("{err}✗{} cancelled — no address given") end
     c.user = t.ask("login username [" .. esc(c.from) .. "]: ")
     if c.user == "" then c.user = c.from end
-    c.pass = t.ask("password / app password: ", { mask = true })
+    c.pass = t.ask("password / app password: ", { mask = true }):gsub("^%s+", ""):gsub("%s+$", "")
     if c.pass == "" then return t.print("{err}✗{} cancelled — no password given") end
     c.name = t.ask("display name (optional): ")
     email.save(c)
@@ -72,7 +72,7 @@ local function compose_and_send(t, to)
 
     t.spin("connecting to " .. esc(c.host), 0.6)
     t.print("{dim}handing off to " .. esc(c.host) .. "…")
-    local ok, detail = email.send(c, to, subject, body)
+    local ok, detail, hint = email.send(c, to, subject, body)
     if ok then
         t.flash("accent", 0.15)
         t.print("{accent}✓ sent{}  {dim}" .. esc(detail))
@@ -80,6 +80,7 @@ local function compose_and_send(t, to)
         t.sparks(24)
     else
         t.print("{err}✗ not sent{}  {dim}" .. esc(detail))
+        if hint then t.print("{warn}▲ {}" .. esc(hint)) end
         t.sound("err")
         t.glitch(0.25, 0.4)
     end
@@ -102,10 +103,14 @@ return {
                 local c = email.load()
                 if not email.configured(c) then return t.print("{warn}▲{} run {accent}email setup{} first") end
                 t.print("{dim}sending a test message to yourself (" .. esc(c.from) .. ")…")
-                local ok, detail = email.send(c, c.from, "Qrawller test ✓",
+                local ok, detail, hint = email.send(c, c.from, "Qrawller test ✓",
                     "This is a test message from the Qrawller Terminal.\nIf you can read this, sending works.")
                 if ok then t.print("{accent}✓ sent{}  {dim}" .. esc(detail)); t.sound("ok"); t.sparks(20)
-                else t.print("{err}✗ failed{}  {dim}" .. esc(detail)); t.sound("err"); t.glitch(0.25, 0.4) end
+                else
+                    t.print("{err}✗ failed{}  {dim}" .. esc(detail))
+                    if hint then t.print("{warn}▲ {}" .. esc(hint)) end
+                    t.sound("err"); t.glitch(0.25, 0.4)
+                end
             elseif sub == "config" then
                 local c = email.load()
                 if not email.configured(c) then return t.print("{dim}not configured — run {accent}email setup") end

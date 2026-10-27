@@ -96,7 +96,8 @@ function email.send(c, to, subject, body)
 
     -- put the url, credentials and options in a curl config file so the
     -- password never appears in the process list / command line
-    local function esc(v) return '"' .. tostring(v):gsub('"', '\\"') .. '"' end
+    -- (escape backslashes first, then quotes — curl unescapes both inside quotes)
+    local function esc(v) return '"' .. tostring(v):gsub('\\', '\\\\'):gsub('"', '\\"') .. '"' end
     local cfg = {
         "url = " .. esc(url),
         "user = " .. esc(c.user .. ":" .. c.pass),
@@ -122,7 +123,29 @@ function email.send(c, to, subject, body)
     out = (out:gsub("__QOK__%s*$", "")):gsub("%s+$", "")
     if ok then return true, "delivered to your SMTP server" end
     if out == "" then out = "curl failed (no output) — check host, port and network" end
-    return false, out
+    return false, out, email.hint(out)
+end
+
+-- turn a raw curl/SMTP error into a plain-English next step
+function email.hint(out)
+    local o = out:lower()
+    if o:find("%(67%)") or o:find("login denied") or o:find("535") or o:find("not accepted")
+        or o:find("authentication") or o:find("5%.7%.8") then
+        return "login was rejected. For Gmail / Yahoo / iCloud you must use an APP PASSWORD "
+            .. "(not your normal password), with 2-step verification turned on. "
+            .. "Use your full email address as the username, and remove any spaces from the app password. "
+            .. "Re-run `email setup` to re-enter it."
+    end
+    if o:find("could not resolve") or o:find("resolve host") then
+        return "the SMTP host name could not be found — check it for typos (e.g. smtp.gmail.com)."
+    end
+    if o:find("couldn't connect") or o:find("connection refused") or o:find("timed out") or o:find("timeout") then
+        return "couldn't reach the server — check the port (465 for SSL, 587 for STARTTLS) and that a firewall isn't blocking it."
+    end
+    if o:find("certificate") or o:find("ssl") or o:find("tls") then
+        return "a secure-connection problem — try the other port/mode (465 ssl vs 587 starttls) in `email setup`."
+    end
+    return nil
 end
 
 -- what the curl command looks like, with the password masked (for `email show`)
