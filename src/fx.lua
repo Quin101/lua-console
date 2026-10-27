@@ -210,7 +210,7 @@ end
 -- drawing ----------------------------------------------------------------------
 
 function fx.draw_grid(cursor_x, cursor_y, time)
-    if fx.opts.background_grid == false then return end
+    if fx.opts.background_grid == false or fx.hide_grid then return end
     local gap = 26
     local pts = {}
     local f = util.palette.faint

@@ -25,7 +25,7 @@ return {
                     table.insert(groups[g], c)
                 end
             end
-            local rank = { core = 1, hack = 2, fx = 3, fun = 4, system = 5 }
+            local rank = { core = 1, map = 2, hack = 3, fx = 4, fun = 5, system = 6 }
             table.sort(order, function(a, b) return (rank[a] or 9) < (rank[b] or 9) end)
             t.print("")
             for _, g in ipairs(order) do
@@ -89,9 +89,9 @@ return {
         category = "core",
         run = function(t, args)
             local s = t.sound_module
-            if args[1] == "on" then s.enabled = true
-            elseif args[1] == "off" then s.enabled = false
-            else s.enabled = not s.enabled end
+            if args[1] == "on" then s.set_enabled(true)
+            elseif args[1] == "off" then s.set_enabled(false)
+            else s.set_enabled(not s.enabled) end
             t.config.on_setting("sound", s.enabled)
             t.print("sound " .. (s.enabled and "{accent}on" or "{dim}off"))
             t.sound("beep")
@@ -99,7 +99,7 @@ return {
     },
     {
         name = "panels",
-        help = "show or hide the side panels (also F2)",
+        help = "show or hide the world map (also F2)",
         category = "core",
         run = function(t)
             t.ui.show_panels = not t.ui.show_panels

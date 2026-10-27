@@ -15,6 +15,9 @@ local ui = {
     press = nil,          -- {x, y, button} for this frame
     show_panels = true,
     tooltip_text = nil,
+    focus = nil,          -- the text field receiving keyboard input
+    field_order = {},
+    born = 0,             -- when the dashboard appeared (for the slide-in)
 }
 
 local GAP = 16
@@ -135,9 +138,10 @@ function ui.button(id, label, x, y, w, h, opts)
     local acc = util.color(opts.color or "accent")
     local faint = util.palette.faint
     local lift = hv * 1.5
-    love.graphics.setColor(acc[1], acc[2], acc[3], 0.04 + hv * 0.1 + pv * 0.35)
+    local act = ui.ease("btn_a_" .. id, opts.active and 1 or 0, 14)
+    love.graphics.setColor(acc[1], acc[2], acc[3], 0.04 + hv * 0.1 + pv * 0.35 + act * 0.2)
     love.graphics.rectangle("fill", x, y - lift, w, h, 4, 4)
-    local bc = util.mix(faint, acc, 0.15 + hv * 0.85)
+    local bc = util.mix(faint, acc, math.max(0.15 + hv * 0.85, act))
     love.graphics.setColor(bc[1], bc[2], bc[3], 1)
     love.graphics.setLineWidth(1)
     love.graphics.rectangle("line", x + 0.5, y + 0.5 - lift, w - 1, h - 1, 4, 4)
@@ -146,7 +150,7 @@ function ui.button(id, label, x, y, w, h, opts)
     local th = 6 + hv * (h - 12)
     love.graphics.rectangle("fill", x + 4, y + (h - th) / 2 - lift, 2, th)
     local font = opts.bold ~= false and ui.font_bold or ui.font
-    local tc = util.mix(util.palette.text, util.palette.white, hv)
+    local tc = util.mix(util.palette.text, util.palette.white, math.max(hv, act))
     love.graphics.setFont(font)
     love.graphics.setColor(tc[1], tc[2], tc[3], 1)
     love.graphics.print(label, math.floor(x + (w - font:getWidth(label)) / 2 + 3), math.floor(y + (h - font:getHeight()) / 2 - lift))
@@ -176,6 +180,182 @@ function ui.toggle(id, label, value, x, y, w)
     love.graphics.setColor(knob[1], knob[2], knob[3], 1)
     love.graphics.circle("fill", sx + sh / 2 + k * (sw - sh), sy + sh / 2, sh / 2 - 3 + hv)
     return value
+end
+
+-- Text input. Returns the (possibly edited) value.
+--   opts.multiline   Enter adds a new line, text wraps
+--   opts.label       small caption above the box
+--   opts.placeholder grey hint when empty
+function ui.textfield(id, value, x, y, w, h, opts)
+    opts = opts or {}
+    value = tostring(value or "")
+    local font = ui.font
+    if opts.label then
+        ui.text(opts.label, x, y, "dim", ui.font)
+        y = y + font:getHeight() + 3
+        h = h - font:getHeight() - 3
+    end
+    ui.field_order[#ui.field_order + 1] = id
+    local hov = ui.hover(x, y, w, h)
+    if ui.clicked(x, y, w, h) then
+        ui.focus_field(id)
+        ui.focus.caret = util.ulen(value)
+        ui.focus_from_click = true
+    end
+    local f = ui.focus
+    local focused = f and f.id == id
+    if focused then
+        -- apply queued keyboard edits
+        local chars = util.chars(value)
+        f.caret = util.clamp(f.caret or #chars, 0, #chars)
+        for _, op in ipairs(f.ops) do
+            if op[1] == "text" then
+                for _, ch in ipairs(util.chars(op[2])) do
+                    if ch ~= "\n" or opts.multiline then
+                        f.caret = f.caret + 1
+                        table.insert(chars, f.caret, ch)
+                    end
+                end
+                f.typed = ui.time()
+            elseif op[1] == "back" and f.caret > 0 then
+                table.remove(chars, f.caret)
+                f.caret = f.caret - 1
+            elseif op[1] == "delete" and f.caret < #chars then
+                table.remove(chars, f.caret + 1)
+            elseif op[1] == "left" then f.caret = math.max(0, f.caret - 1)
+            elseif op[1] == "right" then f.caret = math.min(#chars, f.caret + 1)
+            elseif op[1] == "home" then f.caret = 0
+            elseif op[1] == "end" then f.caret = #chars
+            elseif op[1] == "return" then
+                if opts.multiline then
+                    f.caret = f.caret + 1
+                    table.insert(chars, f.caret, "\n")
+                else
+                    ui.focus_next = (ui.focus_next or 0) + 1
+                end
+            end
+        end
+        f.ops = {}
+        if opts.max then while #chars > opts.max do table.remove(chars) end; f.caret = math.min(f.caret, #chars) end
+        value = table.concat(chars)
+    end
+
+    local fv = ui.ease("tf_" .. id, focused and 1 or 0, 16)
+    local hv = ui.ease("tf_h_" .. id, hov and 1 or 0, 16)
+    local acc, faint, bg = util.palette.accent, util.palette.faint, util.palette.bg
+    love.graphics.setColor(bg[1], bg[2], bg[3], 0.7)
+    love.graphics.rectangle("fill", x, y, w, h, 3, 3)
+    love.graphics.setColor(acc[1], acc[2], acc[3], 0.05 * fv)
+    love.graphics.rectangle("fill", x, y, w, h, 3, 3)
+    local bc = util.mix(faint, acc, math.max(fv, hv * 0.4))
+    love.graphics.setColor(bc[1], bc[2], bc[3], 1)
+    love.graphics.setLineWidth(1)
+    love.graphics.rectangle("line", x + 0.5, y + 0.5, w - 1, h - 1, 3, 3)
+    -- focus underline grows from the left
+    love.graphics.setColor(acc[1], acc[2], acc[3], fv)
+    love.graphics.rectangle("fill", x, y + h - 1, w * fv, 1)
+
+    love.graphics.setScissor()
+    local px, py = x + 7, y + (opts.multiline and 5 or (h - font:getHeight()) / 2)
+    local inner = w - 14
+    love.graphics.setFont(font)
+    if value == "" and not focused and opts.placeholder then
+        ui.text(opts.placeholder, px, py, "dim", nil, 0.7)
+    end
+    local tc = util.palette.white
+    love.graphics.setColor(tc[1], tc[2], tc[3], 1)
+    local caret_x, caret_y = px, py
+    if opts.multiline then
+        -- wrap each paragraph, keeping track of where the caret lands
+        local before = focused and util.usub(value, 1, f.caret) or value
+        local ly = py
+        local lh = font:getHeight() + 2
+        local max_lines = math.max(1, math.floor((h - 8) / lh))
+        -- wrap paragraph by paragraph so empty lines survive
+        local all = {}
+        for para in (value .. "\n"):gmatch("(.-)\n") do
+            local _, wl = font:getWrap(para, inner)
+            if #wl == 0 then wl = { "" } end
+            for _, l in ipairs(wl) do all[#all + 1] = l end
+        end
+        local bl = {}
+        for para in (before .. "\n"):gmatch("(.-)\n") do
+            local _, wl = font:getWrap(para, inner)
+            if #wl == 0 then wl = { "" } end
+            for _, l in ipairs(wl) do bl[#bl + 1] = l end
+        end
+        local caret_line = #bl
+        local scroll = math.max(0, caret_line - max_lines)
+        for i = scroll + 1, math.min(#all, scroll + max_lines) do
+            love.graphics.print(all[i], px, ly)
+            ly = ly + lh
+        end
+        caret_x = px + font:getWidth(bl[#bl] or "")
+        caret_y = py + (caret_line - 1 - scroll) * lh
+    else
+        local before = focused and util.usub(value, 1, f.caret) or value
+        local offset = focused and math.max(0, font:getWidth(before) - inner + 4) or 0
+        love.graphics.setScissor(x + 2, y, w - 4, h)
+        love.graphics.print(value, px - offset, py)
+        love.graphics.setScissor()
+        caret_x = px - offset + font:getWidth(before)
+    end
+    if focused then
+        local idle = ui.time() - (f.typed or 0)
+        local a = idle < 0.5 and 1 or (0.5 + 0.5 * math.cos((idle - 0.5) * 5))
+        love.graphics.setColor(acc[1], acc[2], acc[3], a)
+        love.graphics.rectangle("fill", caret_x, caret_y, 2, font:getHeight())
+        f.caret_x, f.caret_y = caret_x, caret_y
+    end
+    if ui.clip then love.graphics.setScissor(unpack(ui.clip)) end
+    return value
+end
+
+function ui.focus_field(id)
+    if ui.focus and ui.focus.id == id then return end
+    ui.focus = { id = id, ops = {}, typed = ui.time() }
+    sound.play("tick", { pitch = 1.2, volume = 0.6 })
+end
+
+function ui.unfocus()
+    ui.focus = nil
+end
+
+-- keyboard routing (called from main) -------------------------------------------
+
+function ui.textinput(t)
+    if not ui.focus then return false end
+    table.insert(ui.focus.ops, { "text", t })
+    sound.play("key", { pitch = 0.95 + math.random() * 0.2, volume = 0.8 })
+    if ui.focus.caret_x then fx.sparks(ui.focus.caret_x, ui.focus.caret_y + 8, 2, "accent", 45) end
+    return true
+end
+
+function ui.keypressed(key)
+    local f = ui.focus
+    if f then
+        local ctrl = love.keyboard.isDown("lctrl", "rctrl", "lgui", "rgui")
+        if key == "escape" then
+            ui.unfocus()
+        elseif key == "tab" then
+            ui.focus_next = (ui.focus_next or 0) + 1
+        elseif key == "v" and ctrl then
+            table.insert(f.ops, { "text", love.system.getClipboardText() or "" })
+        elseif key == "backspace" or key == "delete" then
+            table.insert(f.ops, { key == "backspace" and "back" or "delete" })
+            sound.play("back", { pitch = 0.9 + math.random() * 0.2 })
+        elseif key == "return" or key == "kpenter" or key == "left" or key == "right" or key == "home" or key == "end" then
+            table.insert(f.ops, { key == "kpenter" and "return" or key })
+        end
+        return true
+    end
+    for _, w in ipairs(ui.widgets) do
+        if w.keypressed then
+            local ok, used = pcall(w.keypressed, w, ui, key)
+            if ok and used then return true end
+        end
+    end
+    return false
 end
 
 -- Filled line graph of a list of numbers.
@@ -239,8 +419,17 @@ end
 function ui.layout()
     local W, H = love.graphics.getDimensions()
     local top, bottom, side = 50, 16, 22
-    local panels = ui.show_panels and W >= 980 and #ui.widgets > 0
-    local pw = panels and math.min(PANEL_W + math.max(0, (W - 1400) * 0.15), 440) or 0
+    local panels = ui.show_panels and W >= 900 and #ui.widgets > 0
+    -- column width: the widest request among widgets (numbers <= 1 are a fraction of the window)
+    local pw = 0
+    if panels then
+        for _, wdg in ipairs(ui.widgets) do
+            local want = wdg.width or PANEL_W
+            if want <= 1 then want = (W - side * 2) * want end
+            pw = math.max(pw, want)
+        end
+        pw = math.floor(math.min(pw, W - side * 2 - GAP - 420))
+    end
     local tx, ty = side, top
     local tw = W - side * 2 - (panels and (pw + GAP) or 0)
     local th = H - top - bottom
@@ -273,7 +462,9 @@ end
 
 function ui.update(dt)
     local mx, my = love.mouse.getPosition()
+    ui.mouse.dx, ui.mouse.dy = mx - ui.mouse.x, my - ui.mouse.y
     ui.mouse.x, ui.mouse.y = mx, my
+    ui.mouse.down = love.mouse.isDown(1)
     for _, w in ipairs(ui.widgets) do
         local target = w.collapsed and 1 or 0
         w.collapse = w.collapse + (target - w.collapse) * math.min(1, dt * 12)
@@ -289,20 +480,26 @@ end
 function ui.draw()
     local now = ui.time()
     ui.tooltip_text = nil
+    ui.last_field_order = ui.field_order
+    ui.field_order = {}
     local r = ui.term_rect
     local busy = ui.T.task and ("● " .. tostring(ui.T.task.name)) or "idle"
-    draw_panel(r[1], r[2], r[3], r[4], "TERMINAL", 1, busy)
+    local tappear = util.ease_out(util.clamp((now - ui.born) / 0.5, 0, 1))
+    love.graphics.push()
+    love.graphics.translate(-(1 - tappear) * 40, 0)
+    draw_panel(r[1], r[2], r[3], r[4], "TERMINAL", tappear, busy)
+    love.graphics.pop()
 
     for i, w in ipairs(ui.widgets) do
         local rect = ui.rects[i]
         if rect and w.draw then
             local x, y, pw, ph = rect[1], rect[2], rect[3], rect[4]
-            local appear = util.ease_out(util.clamp((now - w.born) / 0.35, 0, 1))
+            local appear = util.ease_out(util.clamp((now - math.max(w.born, ui.born + 0.15 + i * 0.1)) / 0.45, 0, 1))
             love.graphics.push()
             love.graphics.translate((1 - appear) * 30, 0)
             -- clicking the title bar collapses the panel
-            local title_hover = ui.hover(x, y, pw - 90, TITLE_H)
-            if ui.clicked(x, y, pw - 90, TITLE_H) then
+            local title_hover = w.collapsible ~= false and ui.hover(x, y, pw - 90, TITLE_H)
+            if w.collapsible ~= false and ui.clicked(x, y, pw - 90, TITLE_H) then
                 w.collapsed = not w.collapsed
                 sound.play("tick", { pitch = w.collapsed and 0.8 or 1.3 })
             end
@@ -310,9 +507,11 @@ function ui.draw()
             draw_panel(x, y, pw, ph, (w.title or w.file) .. (title_hover and "  ·" or ""), appear, extra)
             if w.collapse < 0.98 then
                 local cx, cy, cw, ch = x + 12, y + TITLE_H + 10, pw - 24, ph - TITLE_H - 18
-                love.graphics.setScissor(x, y + TITLE_H + 1, pw, math.max(0, ph - TITLE_H - 2))
+                ui.clip = { x, y + TITLE_H + 1, pw, math.max(0, ph - TITLE_H - 2) }
+                love.graphics.setScissor(unpack(ui.clip))
                 local ok, err = pcall(w.draw, w, ui, cx, cy, cw, ch)
                 love.graphics.setScissor()
+                ui.clip = nil
                 if not ok then
                     w.draw = nil
                     ui.T.add("widget " .. w.file .. ": " .. tostring(err), "err", { raw = true })
@@ -327,6 +526,21 @@ end
 
 -- drawn after the terminal text so tooltips sit on top
 function ui.draw_overlay()
+    -- tab / enter in a single-line field moves to the next field
+    if ui.focus_next and ui.focus then
+        local order = ui.field_order
+        for i, id in ipairs(order) do
+            if id == ui.focus.id then
+                local nxt = order[i + ui.focus_next]
+                if nxt then ui.focus_field(nxt) else ui.unfocus() end
+                break
+            end
+        end
+    end
+    ui.focus_next = nil
+    -- clicking anywhere that isn't a field drops the focus
+    if ui.press and ui.focus and not ui.focus_from_click then ui.unfocus() end
+    ui.focus_from_click = nil
     if ui.tooltip_text then
         local f = ui.font
         local tw, th = f:getWidth(ui.tooltip_text) + 16, f:getHeight() + 10
@@ -347,6 +561,7 @@ end
 function ui.mousepressed(x, y, button)
     ui.press = { x = x, y = y, button = button }
     ui.mouse.x, ui.mouse.y = x, y
+    ui.mouse.down = button == 1
 end
 
 -- returns true if the wheel event was over a widget

@@ -166,26 +166,40 @@ function util.plain(segs)
     return table.concat(t)
 end
 
--- Splits segments into several lines, each at most `width` characters wide.
+-- Splits segments into lines at most `width` characters wide, breaking at spaces when possible.
 function util.wrap(segs, width)
-    local lines, cur, curlen = {}, {}, 0
+    local chars, colors = {}, {}
     for _, seg in ipairs(segs) do
-        local chars = util.chars(seg.text)
-        local start = 1
-        while start <= #chars do
-            local room = width - curlen
-            if room <= 0 then
-                lines[#lines + 1] = cur
-                cur, curlen = {}, 0
-                room = width
-            end
-            local take = math.min(room, #chars - start + 1)
-            cur[#cur + 1] = { text = table.concat(chars, "", start, start + take - 1), color = seg.color }
-            curlen = curlen + take
-            start = start + take
+        for _, ch in ipairs(util.chars(seg.text)) do
+            chars[#chars + 1] = ch
+            colors[#colors + 1] = seg.color
         end
     end
-    lines[#lines + 1] = cur
+    local function build(a, b)
+        local line, cur = {}, nil
+        for i = a, b do
+            if cur and cur.color == colors[i] then
+                cur.parts[#cur.parts + 1] = chars[i]
+            else
+                cur = { color = colors[i], parts = { chars[i] } }
+                line[#line + 1] = cur
+            end
+        end
+        for i, c in ipairs(line) do line[i] = { text = table.concat(c.parts), color = c.color } end
+        return line
+    end
+    local lines = {}
+    local start = 1
+    while #chars - start + 1 > width do
+        local cut = start + width - 1
+        for i = cut + 1, start + 1, -1 do
+            if chars[i] == " " then cut = i - 1; break end
+        end
+        lines[#lines + 1] = build(start, cut)
+        start = cut + 1
+        while chars[start] == " " do start = start + 1 end
+    end
+    lines[#lines + 1] = build(start, #chars)
     return lines
 end
 

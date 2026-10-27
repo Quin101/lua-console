@@ -9,6 +9,8 @@ local commands = require("src.commands")
 local boot = require("src.boot")
 local make_api = require("src.api")
 local ui = require("src.ui")
+local intro = require("src.intro")
+local markers = require("src.markers")
 
 local cfg
 
@@ -81,9 +83,10 @@ function love.load()
         love.filesystem.write("history.txt", table.concat(h, "\n", from))
     end
 
-    sound.load(cfg.sound, cfg.volume)
+    sound.load(cfg.sound, cfg.volume, cfg.ambient)
     fx.init(cfg)
     local count = commands.load()
+    markers.load()
     T.init(cfg, commands)
     T.history = load_history()
     T.api = make_api(T)
@@ -94,35 +97,51 @@ function love.load()
     ui.layout()
     make_icon()
 
-    local function autorun()
-        for _, line in ipairs(cfg.autorun or {}) do T.api.run(line) end
+    local function start_terminal()
+        T.start_task(function()
+            boot.welcome(T.api, commands.errors)
+            for _, e in ipairs(ui.errors) do T.api.print("{warn}! {}" .. e:gsub("{", "{{"), "dim") end
+            for _, line in ipairs(cfg.autorun or {}) do T.api.run(line) end
+        end, "boot")
     end
 
-    local skip = not cfg.boot or love.keyboard.isDown("lshift", "rshift")
-    if skip then
-        T.start_task(function() boot.welcome(T.api, commands.errors); autorun() end, "boot")
+    if cfg.boot ~= false and not love.keyboard.isDown("lshift", "rshift") then
+        intro.start({ commands = count, markers = #markers.list }, start_terminal)
     else
-        T.start_task(function()
-            boot.intro(T.api, count)
-            boot.welcome(T.api, commands.errors)
-            autorun()
-        end, "boot")
-        T.booting = true
+        sound.ambient(true, 0.35)
+        start_terminal()
     end
 end
 
 function love.update(dt)
     dt = math.min(dt, 1 / 20)
     fx.update(dt)
+    if intro.active then
+        intro.update(dt)
+        -- the dashboard slides in while the intro fades out
+        if intro.exit_t and not ui.revealed then
+            ui.revealed = true
+            ui.born = T.time
+        end
+    end
     ui.update(dt)
     T.update(dt)
 end
 
 function love.draw()
-    T.draw()
+    if intro.active then
+        fx.render(function()
+            if intro.exit_t then T.draw_text() end
+            intro.draw()
+        end, T.cursor_x, T.cursor_y, T.time)
+    else
+        T.draw()
+    end
 end
 
 function love.textinput(text)
+    if intro.active then return end
+    if ui.textinput(text) then return end
     T.textinput(text)
 end
 
@@ -131,23 +150,15 @@ function love.keypressed(key)
         love.window.setFullscreen(not love.window.getFullscreen(), "desktop")
         return
     end
+    if intro.active then
+        intro.skip()
+        return
+    end
     if key == "f2" then
         ui.show_panels = not ui.show_panels
         return
     end
-    if T.booting then
-        -- any key skips the boot sequence
-        T.booting = false
-        if T.task and T.task.name == "boot" then
-            T.task = nil
-            T.clear(false)
-            T.start_task(function()
-                boot.welcome(T.api, commands.errors)
-                for _, line in ipairs(cfg.autorun or {}) do T.api.run(line) end
-            end, "boot")
-            return
-        end
-    end
+    if ui.keypressed(key) then return end
     T.keypressed(key)
 end
 
@@ -156,7 +167,15 @@ function love.wheelmoved(x, y)
 end
 
 function love.mousepressed(x, y, button)
+    if intro.active then
+        intro.skip()
+        return
+    end
     ui.mousepressed(x, y, button)
+end
+
+function love.quit()
+    if markers.dirty_at then markers.save() end
 end
 
 function love.resize()

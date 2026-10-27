@@ -23,8 +23,9 @@ return {
     -- Sound (all sounds are generated in code, no audio files needed)
     sound = true,
     volume = 0.5,
+    ambient = true,          -- low background drone
 
-    -- Play the boot animation on start (hold Shift or press any key to skip it)
+    -- Play the intro animation on start (hold Shift while launching, or press any key, to skip it)
     boot = true,
 
     -- Commands to run automatically after boot
