@@ -719,6 +719,7 @@ local function draw_connections(w, ui, m, x, y, ew, ch)
     end
     if ui.button("wm_evid_add", "+ FILE", x + 76, y, 70, 20, { bold = false, tip = "attach a file from the vault as evidence" }) then
         w.evidence_pick = { marker = m.id, scroll = 0 }
+        ui.unfocus()
         ui.sound("beep", { pitch = 1.1 })
     end
     ui.text("drop a file on the window to attach it", x + 152, y + 2, "dim")
@@ -906,6 +907,12 @@ draw_evidence_picker = function(w, ui, x, y, width, height)
 end
 
 function W.draw(w, ui, x, y, width, height)
+    -- while the evidence picker is open it is a modal: hide the press from the
+    -- map, list and editor underneath so only the picker receives clicks
+    local modal = w.evidence_pick ~= nil
+    local saved_press = ui.press
+    if modal then ui.press = nil end
+
     -- toolbar
     local bh = 26
     if ui.button("wm_tool_victim", "◆ VICTIM", x, y, 110, bh, { active = w.tool == "victim", tip = "drop a victim marker" }) then
@@ -952,6 +959,7 @@ function W.draw(w, ui, x, y, width, height)
     local m = markers.selected and markers.get(markers.selected)
     if m then draw_editor(w, ui, m, ex, dy, ew, dh) else draw_empty(w, ui, ex, dy, ew, dh) end
 
+    if modal then ui.press = saved_press end
     if w.evidence_pick then draw_evidence_picker(w, ui, x, y, width, height) end
 end
 

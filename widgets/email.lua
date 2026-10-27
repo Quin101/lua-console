@@ -116,6 +116,12 @@ end
 -- compose form ---------------------------------------------------------------
 
 local function draw_compose(w, ui, x, y, width, height)
+    -- while the attach picker is open it is a modal: hide the press from the form
+    -- underneath so clicks (and focus changes) only reach the picker
+    local modal = w.picker ~= nil
+    local saved_press = ui.press
+    if modal then ui.press = nil end
+
     -- account bar
     ui.text("FROM", x, y + 2, "dim")
     ui.text((w.cfg.name and w.cfg.name ~= "" and (w.cfg.name .. "  ") or "") .. (w.cfg.from or ""), x + 40, y + 2, "white")
@@ -193,6 +199,7 @@ local function draw_compose(w, ui, x, y, width, height)
     end
     if ui.button("em_attach", "+ ATTACH", x + 126, ay, 92, 26, { bold = false, tip = "attach a file from the vault (or drag one onto the window)" }) then
         w.picker = { scroll = 0 }
+        ui.unfocus()
         ui.sound("beep", { pitch = 1.1 })
     end
     if ui.button("em_clear", "CLEAR", x + 226, ay, 72, 26, { bold = false }) then
@@ -210,6 +217,9 @@ local function draw_compose(w, ui, x, y, width, height)
         if w.result.hint then ui.text(w.result.hint, x, ay - (#w.attach > 0 and 46 or 20), "warn", ui.font) end
     end
 
+    -- restore the real press for the picker, which is the only thing that should
+    -- receive clicks while it is open
+    if modal then ui.press = saved_press end
     if w.picker then draw_picker(w, ui, x, y, width, height) end
 end
 
