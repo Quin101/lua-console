@@ -8,8 +8,9 @@ The hacking commands are fake theatre. Nothing touches your real network.
 
 ## What's in it
 
-- **Intro**: a spinning dotted globe with link arcs, the logo assembling from flying pixels, a
-  shockwave, and a loading sequence. Any key skips it.
+- **Intro**: a cinematic boot — a spinning dotted globe, the Qrawller logo charging up and
+  slamming in with a chromatic-split impact, shockwaves and screen shake, a reticle and energy
+  arcs, then an explosive glitch transition into the dashboard. Any key skips it.
 - **World map**: drag to pan, mouse wheel to zoom.
   - **◆ VICTIM** marker: name, age, date of birth, date of death, IP, address, and an "anything else" box.
   - **○ PLACE** marker: name and a description.

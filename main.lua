@@ -44,17 +44,21 @@ local function load_history()
 end
 
 local function make_icon()
-    local size = 64
+    -- use the Qrawller logo on a dark rounded tile
+    local ok, logo = pcall(love.image.newImageData, "assets/qrawller_icon.png")
+    if not ok then return end
+    local size = 128
     local canvas = love.graphics.newCanvas(size, size, { dpiscale = 1 })
     love.graphics.setCanvas(canvas)
     love.graphics.clear(0, 0, 0, 0)
-    local bg, acc = util.palette.bg, util.palette.accent
+    local bg = util.palette.bg
     love.graphics.setColor(bg[1] + 0.03, bg[2] + 0.03, bg[3] + 0.03, 1)
-    love.graphics.rectangle("fill", 2, 2, size - 4, size - 4, 14, 14)
-    love.graphics.setColor(acc[1], acc[2], acc[3], 1)
-    love.graphics.setLineWidth(6)
-    love.graphics.line(18, 18, 34, 32, 18, 46)
-    love.graphics.rectangle("fill", 36, 42, 14, 5)
+    love.graphics.rectangle("fill", 0, 0, size, size, 22, 22)
+    local img = love.graphics.newImage(logo)
+    img:setFilter("linear", "linear")
+    local s = (size * 0.84) / img:getWidth()
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(img, size / 2, size / 2, 0, s, s, img:getWidth() / 2, img:getHeight() / 2)
     love.graphics.setCanvas()
     pcall(love.window.setIcon, canvas:newImageData())
 end
