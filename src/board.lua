@@ -55,8 +55,11 @@ function board.save()
         out[#out + 1] = "        { " .. table.concat(parts, ", ") .. " },\n"
     end
     out[#out + 1] = "    },\n}\n"
-    love.filesystem.write(FILE, table.concat(out))
+    local text = table.concat(out)
+    love.filesystem.write(FILE, text)
     board.dirty_at = nil
+    local ok, sync = pcall(require, "src.sync")
+    if ok then sync.push(FILE, text) end
 end
 
 function board.touch() board.dirty_at = love.timer.getTime() end

@@ -87,6 +87,23 @@ function love.load()
     fx.init(cfg)
     local count = commands.load()
     markers.load()
+    local board = require("src.board")
+    board.load()
+
+    -- cloud-folder sync: mirror markers + board to a synced folder and reload
+    -- when another device changes them
+    local sync = require("src.sync")
+    sync.register("markers.lua", function() markers.load() end)
+    sync.register("board.lua", function() board.load() end)
+    cfg.sync = sync
+    if saved.syncdir and saved.syncdir ~= "" then
+        local okv = pcall(function() return sync.enable(saved.syncdir) end)
+        if not okv then saved.syncdir = nil end
+    end
+    sync.on_change = function(name)
+        if T.api then T.api.print("{accent}⟲{} synced update from another device  {dim}(" .. name .. ")") end
+    end
+
     T.init(cfg, commands)
     T.history = load_history()
     T.api = make_api(T)
@@ -115,6 +132,7 @@ end
 
 function love.update(dt)
     dt = math.min(dt, 1 / 20)
+    require("src.sync").update(dt)
     fx.update(dt)
     if intro.active then
         intro.update(dt)

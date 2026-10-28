@@ -36,8 +36,8 @@ The hacking commands are fake theatre. Nothing touches your real network.
   edit text in place, preview images (list or grid view), rename, delete, and open the folder on disk.
 - **Terminal**: `help` lists everything. Map: `markers`, `locate <name>`, `dossier <name>`,
   `link <a> <b> [label]`, `board`. Files: `ls`, `cat`, `mkdir`, `write`, `files`.
-  Tools: `password`, `calc` (`=`) — a real calculator, and `email` — a real
-  email sender (see below).
+  Tools: `password`, `calc` (`=`) — a real calculator, `email` — a real email
+  sender, and `sync` — keep markers + board in step across devices (see below).
 - **Sound**: dark synthesized sounds (sub-bass hits, distortion, reverb) and a low ambient drone.
   Turn them off with `sound off`, or set `ambient = false` in `config.lua`.
 
@@ -66,6 +66,23 @@ macOS will block it because it isn't signed: go to **System Settings → Privacy
 | `esc` | cancel placement / close viewer or editor |
 | `F11` | fullscreen |
 | click a panel title | collapse it |
+
+## Syncing across devices
+
+`sync` keeps your **map markers** and **case board** in step across your devices
+through a folder that a cloud service (Dropbox, iCloud Drive, OneDrive, Google
+Drive) already mirrors. There's no server — it rides on your existing cloud sync.
+
+1. On device A: `sync to <folder>` — point at a folder inside your cloud drive,
+   e.g. `sync to /Users/you/Dropbox/Qrawller` (or `C:/Users/you/Dropbox/Qrawller`).
+2. On device B: install the app and run the same `sync to <that same synced folder>`.
+3. Edit on either device; the other reloads within a few seconds.
+
+- `sync status` shows the current state; `sync off` stops syncing.
+- Near-real-time: as fast as your cloud app syncs the file, not instant.
+- Last edit wins if two devices change the same thing at the same moment.
+- Email settings and vault files stay local (so your password isn't copied to the cloud).
+- True server-based live sync isn't included — that would need a hosted backend.
 
 ## Sending real email
 
